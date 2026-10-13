@@ -89,6 +89,8 @@
   .rise-box .ev { display:flex; flex-wrap:wrap; gap:10px; padding:3px 0; }
   .recs .up { color:#2563eb; font-weight:700; }
   .ok { font-weight:400; font-size:11px; color:#22a55b; }
+  .row-warn { color:#d97706; font-weight:800; margin-right:4px; }
+  .row-up { color:#2563eb; font-weight:800; font-size:11px; margin-right:4px; }
   .cal-day .warn { position:absolute; top:3px; right:5px; font-size:11px; font-weight:800; color:#d97706; }
   .sus-box { border:1px solid #f5c26b; background:#fff8ec; border-radius:6px; padding:8px 10px; margin-bottom:10px; font-size:13px; }
   .sus-box .ev { display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding:4px 0; border-bottom:1px dashed #f1d9a8; }
@@ -154,8 +156,8 @@
         근무일 기준이에요. 1타임은 직전 근무일 17시부터 그날 07시까지(출근 전), 2타임은 07~17시예요. 큰 숫자가 둘을 합친 전체예요.<br>
         토·일·공휴일 판매량은 다음 근무일 1타임에 합쳐져요. 17시가 지나면 다음 근무일이 진행중이 돼요.<br>
         빨간 '진행중'은 아직 마감 전이라 계속 늘어나는 날이에요.<br>
-        파란 '▲'는 재고가 한 번에 1,000개 이상 늘어난 날이에요 (입고 또는 사람이 숫자를 늘림, 판매량에는 영향 없음).<br>
-        주황 '!'는 사람이 재고를 직접 고친 것으로 의심되는 감소가 있는 날이에요. 합계에서 빠져 있고, 표에서 줄을 눌러 판매로 인정하면 다시 들어가요.
+        아래 표 스토어명 앞 파란 '▲'는 재고가 한 번에 1,000개 이상 늘어난 옵션이에요 (입고 또는 사람이 숫자를 늘림, 판매량에는 영향 없음).<br>
+        주황 '!'는 사람이 재고를 직접 고친 것으로 의심되는 감소가 있는 옵션이에요. 합계에서 빠져 있고, 표에서 줄을 눌러 판매로 인정하면 다시 들어가요.
       </div>
     </div>
 
@@ -838,7 +840,7 @@ function renderCalendar() {
     const alpha = t && max ? 0.08 + 0.35 * (t / max) : 0;
     const style = alpha ? `style="background:rgba(59,130,246,${alpha.toFixed(2)})"` : '';
     html += `<div class="${cls.join(' ')}" data-day="${day}" ${style}>
-      <span class="n">${d}</span>${has && dayPending(day) > 0 ? '<span class="warn" title="수동변경 의심 있음">!</span>' : ''}${has && dayRise(day) > 0 ? '<span class="up" title="재고 대량 증가 있음">▲</span>' : ''}${day === currentDay ? '<span class="live">진행중</span>' : ''}
+      <span class="n">${d}</span>${day === currentDay ? '<span class="live">진행중</span>' : ''}
       ${has ? calCellNums(day) : ''}
     </div>`;
   }
@@ -856,6 +858,14 @@ function renderCalendar() {
 }
 
 // ---------------- 선택한 날 표 ----------------
+// 표 스토어명 앞 표시: 주황 ! 수동변경 의심, 파란 ▲ 재고 대량 증가
+function rowFlags(r) {
+  if (!r.v) return '';
+  let h = '';
+  if (pendingOf(r.it.key, r.v) > 0) h += '<span class="row-warn" title="수동변경 의심 있음">!</span>';
+  if (r.v.up > 0) h += '<span class="row-up" title="재고 대량 증가 있음">▲</span>';
+  return h;
+}
 function soldCell(v, key) {
   if (!v) return '-';
   let html = fmtQty(key, soldOf(key, v));
@@ -1004,7 +1014,7 @@ function renderTable() {
     const hi = r.v && r.s >= 10 ? 'sold sold-high' : 'sold';
     const last = lastRecord(r.it.key);
     html += `<tr class="row" data-key="${esc(r.it.key)}" style="background:${c ? c.bg : '#fff'}">
-      <td style="font-weight:600;border-left:6px solid ${c ? c.accent : 'transparent'};white-space:nowrap">${esc(r.store)}</td>
+      <td style="font-weight:600;border-left:6px solid ${c ? c.accent : 'transparent'};white-space:nowrap">${rowFlags(r)}${esc(r.store)}</td>
       <td>${esc(r.optionName)}</td>
       <td class="num ${hi}">${soldCell(r.v, r.it.key)}${r.v && unitNote(r.it.key) ? `<br><span class="small">${unitNote(r.it.key)}</span>` : ''}</td>
       <td class="num">${slotCell(r.v && r.v.t1, r.it.key)}</td>
