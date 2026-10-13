@@ -3,7 +3,7 @@ setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
 echo Opening product pages from list...
-for /f "usebackq delims=" %%u in (`findstr /b /i "http" "products.txt"`) do (
+for /f "usebackq tokens=1" %%u in (`findstr /b /i "http" "products.txt"`) do (
   start "" "chrome.exe" "%%u"
   timeout /t 4 /nobreak >nul
 )
