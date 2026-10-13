@@ -372,6 +372,7 @@ function unitOf(key) {
 const unitK = (key) => unitOf(key).div;
 const unitLabel = (key) => unitOf(key).label;
 const toBox = (key, n) => n / unitK(key); // 표시 단위(박스 또는 m)로 바꾼 값
+// 현재 재고 칸은 환산 없이 링크에 찍힌 숫자 그대로 표시, 박스·m 환산은 전체판매·1타임·2타임에서만
 const fmtNum = (n) => (Math.round(n * 10) / 10).toLocaleString();
 function fmtQty(key, raw) { return `${fmtNum(toBox(key, raw))}${unitLabel(key)}`; }
 function unitNote(key) {
@@ -981,7 +982,7 @@ function renderTable() {
     .map((it) => {
       const v = dd0[it.key] || null;
       const last = lastRecord(it.key);
-      return { it, v, site: it.site, s: v ? soldBox(it.key, v) : -1, t1: v && v.t1 ? soldBox(it.key, v.t1) : -1, t2: v && v.t2 ? soldBox(it.key, v.t2) : -1, k: v ? toBox(it.key, v.k) : -1, store: it.store, optionName: it.optionName || '', last: last ? last.t : '' };
+      return { it, v, site: it.site, s: v ? soldBox(it.key, v) : -1, t1: v && v.t1 ? soldBox(it.key, v.t1) : -1, t2: v && v.t2 ? soldBox(it.key, v.t2) : -1, k: v ? v.k : -1, store: it.store, optionName: it.optionName || '', last: last ? last.t : '' };
     });
 
   rows.sort((a, b) => {
@@ -1005,10 +1006,10 @@ function renderTable() {
     html += `<tr class="row" data-key="${esc(r.it.key)}" style="background:${c ? c.bg : '#fff'}">
       <td style="font-weight:600;border-left:6px solid ${c ? c.accent : 'transparent'};white-space:nowrap">${esc(r.store)}</td>
       <td>${esc(r.optionName)}</td>
-      <td class="num ${hi}">${soldCell(r.v, r.it.key)}</td>
+      <td class="num ${hi}">${soldCell(r.v, r.it.key)}${r.v && unitNote(r.it.key) ? `<br><span class="small">${unitNote(r.it.key)}</span>` : ''}</td>
       <td class="num">${slotCell(r.v && r.v.t1, r.it.key)}</td>
       <td class="num">${slotCell(r.v && r.v.t2, r.it.key)}</td>
-      <td class="num">${r.v ? fmtQty(r.it.key, r.v.k) : '-'}${unitNote(r.it.key) ? `<br><span class="small">${unitNote(r.it.key)}</span>` : ''}</td>
+      <td class="num">${r.v ? `${Number(r.v.k).toLocaleString()}개` : '-'}</td>
       <td class="num small">${last ? last.t.replace('T', ' ') : '-'}</td>
     </tr>`;
     if (openKey === r.it.key) {
