@@ -156,8 +156,8 @@
         근무일 기준이에요. 1타임은 직전 근무일 17시부터 그날 07시까지(출근 전), 2타임은 07~17시예요. 큰 숫자가 둘을 합친 전체예요.<br>
         토·일·공휴일 판매량은 다음 근무일 1타임에 합쳐져요. 17시가 지나면 다음 근무일이 진행중이 돼요.<br>
         빨간 '진행중'은 아직 마감 전이라 계속 늘어나는 날이에요.<br>
-        아래 표 스토어명 앞 파란 '▲'는 재고가 한 번에 1,000개 이상 늘어난 옵션이에요 (입고 또는 사람이 숫자를 늘림, 판매량에는 영향 없음).<br>
-        주황 '!'는 사람이 재고를 직접 고친 것으로 의심되는 감소가 있는 옵션이에요. 합계에서 빠져 있고, 표에서 줄을 눌러 판매로 인정하면 다시 들어가요.
+        스토어 이름표와 아래 표 스토어명 앞 파란 '▲'는 재고가 한 번에 1,000개 이상 늘어난 곳이에요 (입고 또는 사람이 숫자를 늘림, 판매량에는 영향 없음).<br>
+        주황 '!'는 사람이 재고를 직접 고친 것으로 의심되는 감소가 있는 곳이에요. 합계에서 빠져 있고, 표에서 줄을 눌러 판매로 인정하면 다시 들어가요.
       </div>
     </div>
 
@@ -766,6 +766,20 @@ function dayTotalWhere(day, fn) {
   return sum;
 }
 
+// 스토어 칩 앞 표시: 그 날 그 스토어 옵션 중 수동변경 의심이 있으면 주황 !, 재고 대량 증가가 있으면 파란 ▲
+function storeFlags(day, st, cat) {
+  const dd = dayData[day];
+  if (!dd) return '';
+  let pend = 0, up = 0;
+  items.forEach((it) => {
+    if (it.store !== st || catOf(it) !== cat) return;
+    const v = dd[it.key];
+    if (!v) return;
+    pend += pendingOf(it.key, v);
+    up += v.up || 0;
+  });
+  return (pend > 0 ? '<span class="row-warn" title="수동변경 의심 있음">!</span>' : '') + (up > 0 ? '<span class="row-up" title="재고 대량 증가 있음">▲</span>' : '');
+}
 function renderLegend() {
   const label = selectedDay === currentDay ? '오늘' : `${Number(selectedDay.slice(5, 7))}/${Number(selectedDay.slice(8))}`;
   const all = dayTotal(selectedDay, null) || 0;
@@ -781,7 +795,7 @@ function renderLegend() {
         const c = storeColors[st];
         const t = fmtSums(sumsWhere(selectedDay, (it) => it.store === st && catOf(it) === cat));
         const on = activeStore === st && activeCat === cat;
-        return `<span class="chip${on ? ' active' : ''}" data-store="${esc(st)}" data-cat="${esc(cat)}" style="background:${c.bg};border-color:${c.accent}">${esc(st)} (${label} ${t})</span>`;
+        return `<span class="chip${on ? ' active' : ''}" data-store="${esc(st)}" data-cat="${esc(cat)}" style="background:${c.bg};border-color:${c.accent}">${storeFlags(selectedDay, st, cat)}${esc(st)} (${label} ${t})</span>`;
       }).join('') || '<span class="small">products.txt의 이 분류 제목 아래에 링크를 넣어주세요</span>'}</div>
     </div>`;
   });
