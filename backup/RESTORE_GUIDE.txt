@@ -1,0 +1,34 @@
+경쟁사 판매량 추적 대시보드 복구 안내
+
+[무엇이 어디에 백업돼 있나]
+대시보드 화면 index.html → 깃허브
+자동조회 bat 파일들 → 깃허브
+상품 링크 목록 products.txt → 깃허브
+판매량 데이터 data 폴더 → 깃허브 (매시간 올라갈 때마다 기록이 전부 남음)
+탬퍼몽키 스크립트 → 깃허브 backup\tampermonkey_tracker.user.js (토큰은 빠져 있음)
+깃허브 토큰 → 백업 안 함, 깃허브 사이트에서 새로 발급
+
+[상황 1] 대시보드나 자동조회가 수정 후에 이상해졌을 때
+1. competitor-stock 폴더에서 restore_code.bat 더블클릭
+2. 복원 지점 날짜 보고 Y 누르기
+3. 판매량 데이터랑 products.txt는 안 건드리고 프로그램 파일만 마지막 정상 상태로 돌아감
+
+[상황 2] 수집 PC가 고장 나서 새 PC로 옮길 때
+1. 새 PC에 크롬 설치 후 네이버 로그인
+2. https://git-scm.com 에서 Git 설치, 설치 화면은 전부 다음 눌러도 됨
+3. 깃허브 사이트 competitor-stock 저장소에서 restore_setup.bat 받아서 바탕화면에 두고 더블클릭
+4. 바탕화면에 competitor-stock 폴더가 생기고 매시 자동조회, 18시10분 자동종료가 등록됨
+5. 크롬에 Tampermonkey 확장 설치
+6. 탬퍼몽키 아이콘 → 새 스크립트 만들기 → 안에 있는 내용 전부 지우기
+7. backup\tampermonkey_tracker.user.js 를 메모장으로 열어 전체 복사 → 붙여넣기
+8. 23번째 줄 GITHUB_TOKEN = "" 따옴표 안에 깃허브 토큰 넣고 Ctrl+S
+9. 토큰이 없으면 깃허브 → Settings → Developer settings → Personal access tokens 에서 새로 발급, competitor-stock 저장소 Contents 읽기쓰기 권한
+10. competitor-stock 폴더 auto_open.bat 더블클릭해서 탭이 열렸다 닫히고 마지막에 업로드 완료 뜨는지 확인
+
+[상황 3] 판매량 데이터가 잘못 올라가거나 지워졌을 때
+깃허브에 매시간 기록이 남아 있어서 원하는 시각으로 되돌릴 수 있음
+직접 하지 말고 Claude한테 몇 월 며칠 몇 시로 되돌려달라고 요청
+
+[평소에 해둘 것]
+수정이 끝나고 며칠 정상으로 돌아가면 Claude한테 복원 지점 갱신해달라고 하기
+탬퍼몽키 스크립트를 고치면 Claude한테 백업 파일도 갱신해달라고 하기
