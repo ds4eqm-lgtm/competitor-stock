@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         스마트스토어 판매량 추적기
 // @namespace    competitor-stock-tracker
-// @version      4.4
+// @version      4.5
 // @description  상품페이지가 스스로 불러오는 옵션별 재고 데이터를 읽어서 옵션 단위로 판매추정을 깃허브에 자동 기록
 // @match        https://smartstore.naver.com/*/products/*
 // @match        https://brand.naver.com/*/products/*
@@ -235,8 +235,18 @@
   }
 
   // ---------------- 재고 데이터 읽기 ----------------
+  // 단가: 상품 페이지 할인가(즉시할인 적용가) + 옵션 추가금. 못 찾으면 null
+  function basePriceOf(data) {
+    const b = data.benefitsView || {};
+    const cands = [b.discountedSalePrice, b.mobileDiscountedSalePrice, data.discountedSalePrice, data.mobileDiscountedSalePrice, data.salePrice];
+    for (const c of cands) { const n = Number(c); if (n > 0) return n; }
+    return null;
+  }
+
   function extractOptions(data) {
     const results = [];
+    const base = basePriceOf(data);
+    const priceWith = (add) => (base == null ? null : base + (Number(add) || 0));
     const list = data.optionCombinations || data.standardCombinations || [];
 
     list.forEach((o) => {
@@ -247,7 +257,7 @@
           .map((k) => o[k])
           .filter(Boolean);
         const name = parts.length ? parts.join(' / ') : String(o.id);
-        results.push({ id: String(o.id), name, stock: o.stockQuantity });
+        results.push({ id: String(o.id), name, stock: o.stockQuantity, price: priceWith(o.price) });
       }
     });
 
@@ -258,13 +268,14 @@
             id: String(o.id || o.optionName1 || 'default'),
             name: o.optionName1 || o.name || '기본옵션',
             stock: o.stockQuantity,
+            price: priceWith(o.price),
           });
         }
       });
     }
 
     if (!results.length && data.stockQuantity != null) {
-      results.push({ id: 'default', name: '기본', stock: data.stockQuantity });
+      results.push({ id: 'default', name: '기본', stock: data.stockQuantity, price: base });
     }
 
     return results;
@@ -419,6 +430,13 @@
           const key = keyOf(en, opt);
           const old = latest[key] || {};
           const daily = Object.assign({}, old.daily || {});
+          // 단가가 바뀐 날만 기록 { 날짜: 단가 } (대시보드가 날짜별 매출 계산에 씀)
+          const prices = Object.assign({}, old.prices || {});
+          const np = Number(opt.price);
+          if (np > 0) {
+            const lastDay = Object.keys(prices).sort().pop();
+            if (!lastDay || prices[lastDay] !== np) prices[en.today] = np;
+          }
           Object.entries(dailyMap[key] || {}).forEach(([day, r]) => {
             // 기준 기록이 남아 있는 날은 새로 계산한 값으로, 아니면 기존 보관값 유지
             if (r.base || !daily[day] || !daily[day].t1) daily[day] = compactDay(r);
@@ -430,6 +448,8 @@
             optionName: opt.name,
             date: en.today,
             stock: opt.stock,
+            price: np > 0 ? np : old.price,
+            prices,
             daily,
           };
         }));

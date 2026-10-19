@@ -58,6 +58,23 @@
   .cal-day { border:1px solid #eee; border-radius:6px; min-height:74px; padding:4px 4px; font-size:12px; cursor:pointer; position:relative; background:#fff; }
   .cal-day .n { color:#666; }
   .cal-day .ts { display:block; font-size:10px; color:#555; text-align:right; line-height:1.3; white-space:nowrap; }
+  .cal-day .rev { display:block; font-size:11px; font-weight:700; color:#047857; text-align:right; white-space:nowrap; }
+  .price-sub { display:block; font-size:11px; color:#666; }
+  .calc { margin-top:16px; border-top:1px solid #eee; padding-top:14px; }
+  .calc-title { font-weight:800; font-size:16px; margin-bottom:8px; }
+  .calc-row { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-bottom:6px; font-size:13px; }
+  .calc-row select, .calc-row input { padding:5px 6px; border:1px solid #ccc; border-radius:6px; font-size:13px; }
+  .calc-row button { padding:5px 9px; border:1px solid #ccc; border-radius:6px; background:#fff; font-size:12px; cursor:pointer; }
+  .calc-row button:hover { background:#f3f4f6; }
+  .calc-sum { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:6px; margin:8px 0; }
+  .calc-sum div { background:#f0fdf4; border-radius:8px; padding:8px 10px; font-size:12px; color:#555; }
+  .calc-sum b { display:block; font-size:16px; color:#065f46; margin-top:2px; }
+  .calc-tbl { width:100%; border-collapse:collapse; font-size:12px; margin-top:6px; font-variant-numeric:tabular-nums; }
+  .calc-tbl th, .calc-tbl td { padding:4px 6px; border-bottom:1px solid #f0f0f0; text-align:right; }
+  .calc-tbl th:first-child, .calc-tbl td:first-child { text-align:left; }
+  .calc-tbl th { background:#fafafa; font-weight:700; }
+  .calc-sec { font-weight:700; margin-top:12px; font-size:13px; }
+  .calc-warn { font-size:12px; color:#b45309; margin-top:6px; }
   .cal-day .v { display:block; margin-top:2px; font-weight:700; font-size:13px; text-align:right; }
   .cal-day .live { display:block; font-size:10px; color:#e0442f; font-weight:700; line-height:1.2; }
   .cal-day.empty { cursor:default; background:#fafafa; color:#ccc; }
@@ -160,7 +177,25 @@
         토·일·공휴일 판매량은 다음 근무일 1타임에 합쳐져요. 17시가 지나면 다음 근무일이 진행중이 돼요.<br>
         빨간 '진행중'은 아직 마감 전이라 계속 늘어나는 날이에요.<br>
         스토어 이름표와 아래 표 스토어명 앞 파란 '▲'는 재고가 한 번에 200박스(장판은 200m) 이상 늘어난 곳이에요 (입고 또는 사람이 숫자를 늘림, 판매량에는 영향 없음).<br>
-        주황 '!'는 한 번에 200박스(장판은 200m) 이상 줄어서 사람이 재고를 직접 고친 것으로 의심되는 곳이에요. 합계에서 빠져 있고, 표에서 줄을 눌러 판매로 인정하면 다시 들어가요.
+        주황 '!'는 한 번에 200박스(장판은 200m) 이상 줄어서 사람이 재고를 직접 고친 것으로 의심되는 곳이에요. 합계에서 빠져 있고, 표에서 줄을 눌러 판매로 인정하면 다시 들어가요.<br>
+        초록 금액은 그날 추정 매출이에요 (판매 수량 × 그날 상품 페이지 할인가).
+      </div>
+      <div class="calc">
+        <div class="calc-title">매출 계산기</div>
+        <div class="calc-row">
+          <select id="cScope"></select>
+        </div>
+        <div class="calc-row">
+          <input type="date" id="cFrom"> ~ <input type="date" id="cTo">
+        </div>
+        <div class="calc-row">
+          <button data-q="week">이번 주</button>
+          <button data-q="month">이번 달</button>
+          <button data-q="prev">지난 달</button>
+          <button data-q="7">최근 7일</button>
+          <button data-q="30">최근 30일</button>
+        </div>
+        <div id="cOut"></div>
       </div>
     </div>
 
@@ -173,7 +208,9 @@
           <tr>
             <th data-key="store">스토어</th>
             <th data-key="optionName">옵션</th>
+            <th data-key="price" class="num">단가</th>
             <th data-key="s" class="num">전체 판매</th>
+            <th data-key="rev" class="num">매출</th>
             <th data-key="t1" class="num">1타임<br><span class="th-sub">전 근무일 17시~07시</span></th>
             <th data-key="t2" class="num">2타임<br><span class="th-sub">07~17시</span></th>
             <th data-key="k" class="num" id="stockHead">마감 재고</th>
@@ -192,6 +229,7 @@ const LONG_GAP_HOURS = 16; // 기록 사이가 이보다 길게 비면 기간불
 const REPO_API = 'https://api.github.com/repos/yongki9156/competitor-stock/contents/';
 
 let items = [];        // 추적중인 옵션 목록
+let itemByKey = {};    // { 옵션키: latest.json 항목 }
 let allItems = [];     // latest.json 전체 (추적 끝난 상품 포함)
 let historyData = {};  // 시간별 재고 기록
 let dayData = {};      // { 'YYYY-MM-DD': { key: {s,u,k,from,to} } }
@@ -724,6 +762,12 @@ function calCellNums(day) {
     .map((k, i) => `<span class="${i ? 'ts' : 'v'}">${fmtNum(all[k])}${k}</span>`).join('');
 }
 
+function calRevHtml(day) {
+  const r = dayRevenue(day, matchFilter);
+  if (!r.won) return '';
+  return `<span class="rev" title="${fmtWonFull(r.won)}${r.miss ? ` (단가 없는 판매 ${r.miss}건 제외)` : ''}">${fmtWonShort(r.won)}${r.miss ? '+' : ''}</span>`;
+}
+
 function slotTotal(day, slot) {
   const dd = dayData[day];
   if (!dd) return 0;
@@ -898,7 +942,7 @@ function renderCalendar() {
     const style = alpha ? `style="background:rgba(59,130,246,${alpha.toFixed(2)})"` : '';
     html += `<div class="${cls.join(' ')}" data-day="${day}" ${style}>
       <span class="n">${d}</span>${day === currentDay ? '<span class="live">진행중</span>' : ''}
-      ${has ? calCellNums(day) : ''}
+      ${has ? calCellNums(day) : ''}${has ? calRevHtml(day) : ''}
     </div>`;
   }
   const cal = document.getElementById('cal');
@@ -1049,7 +1093,8 @@ function renderTable() {
     .map((it) => {
       const v = dd0[it.key] || null;
       const last = lastRecord(it.key);
-      return { it, v, site: it.site, s: v ? soldBox(it.key, v) : -1, t1: v && v.t1 ? soldBox(it.key, v.t1) : -1, t2: v && v.t2 ? soldBox(it.key, v.t2) : -1, k: v ? v.k : -1, store: it.store, optionName: it.optionName || '', last: last ? last.t : '' };
+      const pr = priceAt(it.key, selectedDay);
+      return { it, v, site: it.site, price: pr == null ? -1 : pr, rev: v && pr != null ? soldOf(it.key, v) * pr : -1, s: v ? soldBox(it.key, v) : -1, t1: v && v.t1 ? soldBox(it.key, v.t1) : -1, t2: v && v.t2 ? soldBox(it.key, v.t2) : -1, k: v ? v.k : -1, store: it.store, optionName: it.optionName || '', last: last ? last.t : '' };
     });
 
   rows.sort((a, b) => {
@@ -1073,7 +1118,9 @@ function renderTable() {
     html += `<tr class="row" data-key="${esc(r.it.key)}" style="background:${c ? c.bg : '#fff'}">
       <td style="font-weight:600;border-left:6px solid ${c ? c.accent : 'transparent'};white-space:nowrap">${rowFlags(r)}${esc(r.store)}</td>
       <td>${productUrl[String(r.it.product)] ? `<a class="opt-link" href="${esc(productUrl[String(r.it.product)])}" target="_blank" rel="noopener" title="상품 페이지 새 탭으로 열기">${esc(r.optionName)}</a>` : esc(r.optionName)}</td>
+      <td class="num">${priceCell(r.it.key, r.price)}</td>
       <td class="num ${hi}">${soldCell(r.v, r.it.key)}${r.v && unitNote(r.it.key) ? `<br><span class="small">${unitNote(r.it.key)}</span>` : ''}</td>
+      <td class="num" style="color:#047857;font-weight:600">${r.rev > 0 ? fmtWonFull(r.rev) : r.v && r.price < 0 && soldOf(r.it.key, r.v) > 0 ? '<span class="small">단가 없음</span>' : r.v ? '0원' : '-'}</td>
       <td class="num">${slotCell(r.v && r.v.t1, r.it.key)}</td>
       <td class="num">${slotCell(r.v && r.v.t2, r.it.key)}</td>
       <td class="num">${r.v ? `${Number(r.v.k).toLocaleString()}개` : '-'}</td>
@@ -1081,7 +1128,7 @@ function renderTable() {
     </tr>`;
     if (openKey === r.it.key) {
       const all = showAllFor === r.it.key;
-      html += `<tr class="detail"><td colspan="7">
+      html += `<tr class="detail"><td colspan="9">
         <div class="detail-head">
           <b>${esc(r.optionName)}</b>
           <button data-toggle-all="${esc(r.it.key)}">${all ? '이 날 기록만 보기' : '전체 기록 보기 (최근 14일)'}</button>
@@ -1137,7 +1184,171 @@ function renderAll() {
   renderLegend();
   renderCalendar();
   renderTable();
+  renderCalc();
 }
+
+// ---------------- 매출 ----------------
+// 단가: 탬퍼몽키가 상품 페이지에서 읽은 할인가(옵션 추가금 포함). prices 에 바뀐 날짜별로 남아 있음
+// 그 날 기준 가장 최근 단가를 쓰고, 단가 기록이 시작되기 전 날짜는 가장 처음 기록된 단가로 추정
+function priceAt(key, day) {
+  const it = itemByKey[key];
+  if (!it) return null;
+  const ps = it.prices || {};
+  const ds = Object.keys(ps).sort();
+  if (ds.length) {
+    let p = ps[ds[0]];
+    ds.forEach((d) => { if (d <= day) p = ps[d]; });
+    return Number(p) || null;
+  }
+  return Number(it.price) || null;
+}
+function priceCell(key, price) {
+  if (price < 0) return '<span class="small">-</span>';
+  const div = unitK(key);
+  const sub = div !== 1 ? `<span class="price-sub">1${unitLabel(key)} ${fmtWonFull(price * div)}</span>` : '';
+  return `${fmtWonFull(price)}${sub}`;
+}
+const fmtWonFull = (n) => `${Math.round(n).toLocaleString()}원`;
+function fmtWonShort(n) {
+  if (n >= 100000000) return `${(n / 100000000).toFixed(2).replace(/\.?0+$/, '')}억`;
+  if (n >= 10000) return `${Math.round(n / 10000).toLocaleString()}만`;
+  return `${Math.round(n).toLocaleString()}원`;
+}
+// 그날 매출 { won, miss: 단가 몰라서 뺀 판매 옵션 수 }
+function dayRevenue(day, fn) {
+  const dd = dayData[day];
+  const out = { won: 0, miss: 0 };
+  if (!dd) return out;
+  items.forEach((it) => {
+    if (!fn(it)) return;
+    const v = dd[it.key];
+    if (!v) return;
+    const sold = soldOf(it.key, v);
+    if (!sold) return;
+    const p = priceAt(it.key, day);
+    if (p == null) out.miss++;
+    else out.won += sold * p;
+  });
+  return out;
+}
+
+// ---------------- 매출 계산기 ----------------
+let calcScope = 'follow'; // follow: 위에서 고른 스토어 따라감
+function calcFilter(scope) {
+  if (scope === 'follow') return (it) => (activeStore === null || it.store === activeStore) && (activeCat === null || catOf(it) === activeCat);
+  if (scope === 'all') return () => true;
+  if (scope.startsWith('cat:')) { const c = scope.slice(4); return (it) => catOf(it) === c; }
+  const [c, st] = scope.slice(6).split('|');
+  return (it) => it.store === st && catOf(it) === c;
+}
+function scopeLabel(scope) {
+  if (scope === 'follow') {
+    if (activeStore !== null) return `${activeStore}${activeCat ? ` (${activeCat})` : ''}`;
+    if (activeCat !== null) return `${activeCat} 전체`;
+    return '전체';
+  }
+  if (scope === 'all') return '전체';
+  if (scope.startsWith('cat:')) return `${scope.slice(4)} 전체`;
+  const [c, st] = scope.slice(6).split('|');
+  return `${st} (${c})`;
+}
+function fillCalcScope() {
+  const sel = document.getElementById('cScope');
+  if (!sel) return;
+  let html = `<option value="follow">위에서 고른 스토어 따라가기 (${esc(scopeLabel('follow'))})</option><option value="all">전체</option>`;
+  CATS.forEach((c) => {
+    html += `<optgroup label="${esc(c)}"><option value="cat:${esc(c)}">${esc(c)} 전체</option>`;
+    [...new Set(items.filter((it) => catOf(it) === c).map((it) => it.store))].forEach((st) => {
+      html += `<option value="store:${esc(c)}|${esc(st)}">${esc(st)}</option>`;
+    });
+    html += '</optgroup>';
+  });
+  sel.innerHTML = html;
+  sel.value = calcScope;
+  if (sel.value !== calcScope) { calcScope = 'follow'; sel.value = 'follow'; }
+}
+function calcSetRange(q) {
+  const today = currentDay || ymd(new Date());
+  const t = toDate(today);
+  let from, to = today;
+  if (q === 'week') { const d = new Date(t); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); from = ymd(d); }
+  else if (q === 'month') from = today.slice(0, 8) + '01';
+  else if (q === 'prev') { const d = new Date(t.getFullYear(), t.getMonth() - 1, 1); from = ymd(d); to = ymd(new Date(t.getFullYear(), t.getMonth(), 0)); }
+  else { const d = new Date(t); d.setDate(d.getDate() - (Number(q) - 1)); from = ymd(d); }
+  document.getElementById('cFrom').value = from;
+  document.getElementById('cTo').value = to;
+  renderCalc();
+}
+function renderCalc() {
+  const out = document.getElementById('cOut');
+  if (!out) return;
+  fillCalcScope();
+  const fEl = document.getElementById('cFrom');
+  const tEl = document.getElementById('cTo');
+  if (!fEl.value || !tEl.value) { const t = currentDay || ymd(new Date()); fEl.value = fEl.value || t.slice(0, 8) + '01'; tEl.value = tEl.value || t; }
+  let from = fEl.value, to = tEl.value;
+  if (from > to) [from, to] = [to, from];
+  const fn = calcFilter(calcScope);
+  const days = Object.keys(dayData).filter((d) => d >= from && d <= to).sort();
+  let won = 0, miss = 0;
+  const qty = {};
+  const rowsD = [];
+  const months = {};
+  const stores = {};
+  days.forEach((day) => {
+    const r = dayRevenue(day, fn);
+    const q = sumsWhere(day, fn);
+    won += r.won; miss += r.miss;
+    Object.entries(q).forEach(([k, v]) => { qty[k] = (qty[k] || 0) + v; });
+    rowsD.push([day, q, r.won]);
+    const mk = day.slice(0, 7);
+    const mo = months[mk] = months[mk] || { won: 0, q: {}, n: 0 };
+    mo.won += r.won; mo.n++;
+    Object.entries(q).forEach(([k, v]) => { mo.q[k] = (mo.q[k] || 0) + v; });
+    const dd = dayData[day];
+    items.forEach((it) => {
+      if (!fn(it) || !dd[it.key]) return;
+      const sold = soldOf(it.key, dd[it.key]);
+      const p = priceAt(it.key, day);
+      if (!sold || p == null) return;
+      const label = `${it.store} (${catOf(it)})`;
+      const so = stores[label] = stores[label] || { won: 0, q: {} };
+      so.won += sold * p;
+      const lb = unitLabel(it.key);
+      so.q[lb] = (so.q[lb] || 0) + toBox(it.key, sold);
+    });
+  });
+  const n = days.length;
+  const live = days.includes(currentDay);
+  let html = `<div class="small">${esc(scopeLabel(calcScope))} · ${from} ~ ${to} · 근무일 ${n}일${live ? ' (오늘 진행중 포함)' : ''}</div>
+    <div class="calc-sum">
+      <div>기간 총매출<b>${fmtWonFull(won)}</b></div>
+      <div>일평균 매출<b>${n ? fmtWonFull(won / n) : '0원'}</b></div>
+      <div>기간 판매량<b>${fmtSums(qty)}</b></div>
+      <div>일평균 판매량<b>${n ? fmtSums(Object.fromEntries(Object.entries(qty).map(([k, v]) => [k, v / n]))) : '0'}</b></div>
+    </div>`;
+  if (miss) html += `<div class="calc-warn">단가 기록이 없는 판매 ${miss}건은 매출에서 빠져 있어요. 탬퍼몽키 4.5 설치 후 다음 자동조회부터 단가가 채워져요.</div>`;
+  if (!n) { out.innerHTML = html + '<div class="small" style="margin-top:8px">이 기간에는 판매 기록이 없어요.</div>'; return; }
+  html += '<div class="calc-sec">날짜별</div><table class="calc-tbl"><tr><th>날짜</th><th>판매량</th><th>매출</th></tr>';
+  rowsD.forEach(([d, q, w]) => { html += `<tr><td>${d.slice(5).replace('-', '/')} (${'일월화수목금토'[toDate(d).getDay()]})${d === currentDay ? ' 진행중' : ''}</td><td>${fmtSums(q)}</td><td>${fmtWonFull(w)}</td></tr>`; });
+  html += '</table><div class="calc-sec">월별</div><table class="calc-tbl"><tr><th>월</th><th>근무일</th><th>판매량</th><th>매출</th><th>일평균</th></tr>';
+  Object.keys(months).sort().forEach((mk) => { const mo = months[mk]; html += `<tr><td>${mk.replace('-', '년 ')}월</td><td>${mo.n}일</td><td>${fmtSums(mo.q)}</td><td>${fmtWonFull(mo.won)}</td><td>${fmtWonFull(mo.won / mo.n)}</td></tr>`; });
+  html += '</table>';
+  const sk = Object.keys(stores);
+  if (sk.length > 1) {
+    html += '<div class="calc-sec">스토어별</div><table class="calc-tbl"><tr><th>스토어</th><th>판매량</th><th>매출</th><th>비중</th></tr>';
+    sk.sort((a, b) => stores[b].won - stores[a].won).forEach((k) => { html += `<tr><td>${esc(k)}</td><td>${fmtSums(stores[k].q)}</td><td>${fmtWonFull(stores[k].won)}</td><td>${won ? Math.round((stores[k].won / won) * 1000) / 10 : 0}%</td></tr>`; });
+    html += '</table>';
+  }
+  out.innerHTML = html;
+}
+(function initCalc() {
+  const sel = document.getElementById('cScope');
+  sel.addEventListener('change', () => { calcScope = sel.value; renderCalc(); });
+  document.getElementById('cFrom').addEventListener('change', renderCalc);
+  document.getElementById('cTo').addEventListener('change', renderCalc);
+  document.querySelectorAll('.calc button[data-q]').forEach((b) => b.addEventListener('click', () => calcSetRange(b.dataset.q)));
+})();
 
 // ---------------- 기존 엑셀(네이버 판매량 예측) 양식용 설정 ----------------
 // 각 칸이 어떤 상품 옵션인지 정리. 상품번호와 옵션 이름 일부(띄어쓰기, - 무시)로 찾음
@@ -1550,6 +1761,8 @@ async function loadData(isRefresh) {
     }
   });
   allItems = items.slice();
+  itemByKey = {};
+  allItems.forEach((it) => { itemByKey[it.key] = it; });
   productOfKey = {};
   catOfKey = {};
   items.forEach((it) => { productOfKey[it.key] = String(it.product); catOfKey[it.key] = catOf(it); });
