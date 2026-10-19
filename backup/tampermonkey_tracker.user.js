@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         스마트스토어 판매량 추적기
 // @namespace    competitor-stock-tracker
-// @version      4.2
+// @version      4.3
 // @description  상품페이지가 스스로 불러오는 옵션별 재고 데이터를 읽어서 옵션 단위로 판매추정을 깃허브에 자동 기록
 // @match        https://smartstore.naver.com/*/products/*
 // @match        https://brand.naver.com/*/products/*
@@ -391,13 +391,15 @@
         }));
         // 새 기록까지 넣은 상태에서 수동변경 의심 구간 찾기
         const flags = detectSuspicious(history);
-        entries.forEach((en) => en.options.forEach((opt) => {
-          const key = keyOf(en, opt);
+        // 밀린 결과가 많으면 같은 옵션이 여러 시간치 들어오므로 옵션마다 한 번만 계산 (화면 멈춤 방지)
+        const keys = new Set();
+        entries.forEach((en) => en.options.forEach((opt) => keys.add(keyOf(en, opt))));
+        keys.forEach((key) => {
           const rec = history[key];
           // 오래된 기록을 지우기 전에 일별 판매량부터 계산해 둠
           dailyMap[key] = computeFinishedDays(rec, now, flags[key] || {});
           Object.keys(rec).forEach((t) => { if (t < cutoffStr) delete rec[t]; });
-        }));
+        });
         return history;
       },
       `판매량 업데이트 ${label} ${stamp}`
@@ -406,7 +408,8 @@
     await updateJsonFile(
       'data/latest.json',
       (latest) => {
-        entries.forEach((en) => en.options.forEach((opt) => {
+        // 같은 옵션이 여러 시간치면 가장 늦은 시간 값이 마지막에 들어가게 시간순 정렬
+        entries.slice().sort((x, y) => (x.nowKey < y.nowKey ? -1 : x.nowKey > y.nowKey ? 1 : 0)).forEach((en) => en.options.forEach((opt) => {
           const key = keyOf(en, opt);
           const old = latest[key] || {};
           const daily = Object.assign({}, old.daily || {});
