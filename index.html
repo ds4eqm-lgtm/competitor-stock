@@ -89,6 +89,8 @@
   .rise-box .ev { display:flex; flex-wrap:wrap; gap:10px; padding:3px 0; }
   .recs .up { color:#2563eb; font-weight:700; }
   .ok { font-weight:400; font-size:11px; color:#22a55b; }
+  .opt-link { color:inherit; text-decoration:none; }
+  .opt-link:hover { color:#2563eb; text-decoration:underline; }
   .row-warn, .row-up { display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px; border-radius:50%; color:#fff; font-weight:900; font-size:12px; line-height:1; margin-right:4px; vertical-align:-3px; box-shadow:0 0 0 2px #fff; }
   .row-warn { background:#ea580c; }
   .row-up { background:#2563eb; font-size:10px; }
@@ -402,6 +404,7 @@ function soldOf(key, v) {
 const CAT_UNITS = { 장판: { div: 10, label: 'm' } };
 const DEFAULT_UNIT = { div: 1, label: '박스' };
 let unitDiv = {};      // { 상품번호: {div, label} } 링크별 지정
+let productUrl = {};   // { 상품번호: products.txt에 적힌 상품 주소 } 옵션명 누르면 이 주소로 열림
 let productOfKey = {}; // { 옵션키: 상품번호 }
 let catOfKey = {};     // { 옵션키: 분류 }
 function unitOf(key) {
@@ -1069,7 +1072,7 @@ function renderTable() {
     const last = lastRecord(r.it.key);
     html += `<tr class="row" data-key="${esc(r.it.key)}" style="background:${c ? c.bg : '#fff'}">
       <td style="font-weight:600;border-left:6px solid ${c ? c.accent : 'transparent'};white-space:nowrap">${rowFlags(r)}${esc(r.store)}</td>
-      <td>${esc(r.optionName)}</td>
+      <td>${productUrl[String(r.it.product)] ? `<a class="opt-link" href="${esc(productUrl[String(r.it.product)])}" target="_blank" rel="noopener" title="상품 페이지 새 탭으로 열기">${esc(r.optionName)}</a>` : esc(r.optionName)}</td>
       <td class="num ${hi}">${soldCell(r.v, r.it.key)}${r.v && unitNote(r.it.key) ? `<br><span class="small">${unitNote(r.it.key)}</span>` : ''}</td>
       <td class="num">${slotCell(r.v && r.v.t1, r.it.key)}</td>
       <td class="num">${slotCell(r.v && r.v.t2, r.it.key)}</td>
@@ -1092,7 +1095,8 @@ function renderTable() {
   tbody.innerHTML = html;
 
   tbody.querySelectorAll('tr.row').forEach((tr) => {
-    tr.addEventListener('click', () => {
+    tr.addEventListener('click', (ev) => {
+      if (ev.target.closest('a.opt-link')) return; // 옵션명 링크는 상품 페이지만 열고 줄은 안 펼침
       const k = tr.dataset.key;
       openKey = openKey === k ? null : k;
       showAllFor = null;
@@ -1467,6 +1471,7 @@ async function loadActiveProducts() {
     const nums = [];
     const cat = {};
     const units = {};
+    const urls = {};
     const offs = new Set();
     const works = new Set();
     const order = [];
@@ -1487,6 +1492,8 @@ async function loadActiveProducts() {
       const m = l.match(/products\/(\d+)/);
       if (!m) return;
       nums.push(m[1]);
+      const u = l.split(/\s+/)[0];
+      if (/^https?:\/\//i.test(u) && !(m[1] in urls)) urls[m[1]] = u;
       // 링크 뒤 단위 표시: '9장' → 박스 환산, '20cm' / '1m' → m 환산
       const tail = l.slice(l.indexOf(m[0]) + m[0].length);
       const uj = tail.match(/(\d+)\s*장/);
@@ -1503,6 +1510,7 @@ async function loadActiveProducts() {
     }
     prodCat = cat;
     unitDiv = units;
+    productUrl = urls;
     extraOff = offs;
     extraWork = works;
     return nums.length ? nums : null;
