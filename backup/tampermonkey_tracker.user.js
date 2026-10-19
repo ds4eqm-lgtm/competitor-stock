@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         스마트스토어 판매량 추적기
 // @namespace    competitor-stock-tracker
-// @version      4.3
+// @version      4.4
 // @description  상품페이지가 스스로 불러오는 옵션별 재고 데이터를 읽어서 옵션 단위로 판매추정을 깃허브에 자동 기록
 // @match        https://smartstore.naver.com/*/products/*
 // @match        https://brand.naver.com/*/products/*
@@ -110,7 +110,7 @@
   // 하루 판매량 계산
   // s: 판매 / u: 기록이 너무 오래 비어 언제 팔렸는지 모르는 양 / x, ev: 수동변경 의심 / k: 그날 마지막 재고
   // t1, t2: 1타임, 2타임 각각의 s, u, x, ev
-  function computeDay(rec, day, flags, now) {
+  function computeDay(rec, day, flags, now, key) {
     flags = flags || {};
     const { start, split, end } = dayWindow(day);
     const es = Object.keys(rec).map((t) => ({ t, dt: toDate(t), v: rec[t] })).sort((a, b) => a.dt - b.dt);
@@ -133,7 +133,7 @@
       const per = e.dt < split ? t2 : t1;
       if (d < 0) {
         // 재고가 늘면 판매 아님. 크게 늘었으면 따로 기록만 해 둠
-        if (-d >= DETECT.BIG_RISE) [per, all].forEach((p) => { p.up += -d; p.upEv.push([nx.t, -d, e.v, nx.v]); });
+        if (isBig(key, -d, DETECT.BIG_RISE)) [per, all].forEach((p) => { p.up += -d; p.upEv.push([nx.t, -d, e.v, nx.v]); });
         continue;
       }
       if (d === 0) continue;
@@ -151,9 +151,15 @@
 
   // ---------------- 수동 재고변경 감지 설정 (대시보드와 탬퍼몽키 스크립트 값을 똑같이 맞출 것) ----------------
   const DETECT = {
-    BIG_DROP: 1000, // 한 번(보통 1시간) 사이에 이 수량 이상 줄면 사람이 재고를 직접 고친 것으로 의심
-    BIG_RISE: 1000, // 한 번에 이 수량 이상 늘면 '재고 대량 증가'로 표시 (입고 또는 사람이 숫자를 늘린 것, 판매량에는 영향 없음)
+    // 대시보드 전체 판매 칸과 같은 단위(박스 또는 m)로 비교
+    BIG_DROP: 200, // 한 번(보통 1시간) 사이에 이 양 이상 줄면 사람이 재고를 직접 고친 것으로 의심
+    BIG_RISE: 200, // 한 번에 이 양 이상 늘면 '재고 대량 증가'로 표시 (입고 또는 사람이 숫자를 늘린 것, 판매량에는 영향 없음)
   };
+  // 상품별 환산값 { 상품번호: 몇 개가 1박스(또는 1m)인지 } 대시보드가 넘겨준 값을 저장해 두고 씀
+  let unitMap = {};
+  try { unitMap = GM_getValue('unitMap', {}) || {}; } catch (e) { /* 무시 */ }
+  const unitDivOf = (key) => Number(unitMap[String(key).split('_')[1]]) || 1;
+  const isBig = (key, n, lim) => n / unitDivOf(key) >= lim;
 
   // 전체 기록에서 수동변경 의심 감소를 찾음
   // 결과: { 옵션키: { 시간키: { d: 감소량, why: [이유...] } } }
@@ -164,10 +170,10 @@
       const ts = Object.keys(rec).sort();
       for (let i = 1; i < ts.length; i++) {
         const d = rec[ts[i - 1]] - rec[ts[i]];
-        if (d >= DETECT.BIG_DROP) {
+        if (d > 0 && isBig(key, d, DETECT.BIG_DROP)) {
           (out[key] = out[key] || {})[ts[i]] = {
             d,
-            why: [`${rec[ts[i - 1]].toLocaleString()}개에서 ${rec[ts[i]].toLocaleString()}개로 한 번에 ${d.toLocaleString()}개 줄어듦 (${DETECT.BIG_DROP.toLocaleString()}개 이상)`],
+            why: [`${rec[ts[i - 1]].toLocaleString()}개에서 ${rec[ts[i]].toLocaleString()}개로 한 번에 ${d.toLocaleString()}개 줄어듦 (${DETECT.BIG_DROP}박스 또는 m 이상)`],
           };
         }
       }
@@ -212,7 +218,7 @@
   }
 
   // 마감이 끝난 날들의 일별 판매량 계산
-  function computeFinishedDays(rec, now, flags) {
+  function computeFinishedDays(rec, now, flags, key) {
     const keys = Object.keys(rec).sort();
     if (!keys.length) return {};
     const out = {};
@@ -221,7 +227,7 @@
     for (let guard = 0; guard < 400; guard++) {
       const day = ymd(d);
       if (day >= today) break;
-      const r = computeDay(rec, day, flags, now);
+      const r = computeDay(rec, day, flags, now, key);
       if (r) out[day] = r;
       d.setDate(d.getDate() + 1);
     }
@@ -397,7 +403,7 @@
         keys.forEach((key) => {
           const rec = history[key];
           // 오래된 기록을 지우기 전에 일별 판매량부터 계산해 둠
-          dailyMap[key] = computeFinishedDays(rec, now, flags[key] || {});
+          dailyMap[key] = computeFinishedDays(rec, now, flags[key] || {}, key);
           Object.keys(rec).forEach((t) => { if (t < cutoffStr) delete rec[t]; });
         });
         return history;
@@ -488,6 +494,14 @@
     box.style.cssText = 'position:fixed;top:12px;right:12px;z-index:99999;background:#111;color:#fff;padding:12px 16px;border-radius:8px;font:14px sans-serif;';
     const say = (t) => { box.textContent = '[판매량추적] ' + t; console.log('[판매량추적] ' + t); };
     const attach = () => document.body && !box.parentNode && document.body.appendChild(box);
+    let gotUnits = false;
+    window.addEventListener('message', (ev) => {
+      const m = ev.data;
+      if (!m || m.from !== 'cs-dashboard' || m.type !== 'units' || !m.map) return;
+      unitMap = m.map;
+      gotUnits = true;
+      try { GM_setValue('unitMap', unitMap); } catch (e) { /* 무시 */ }
+    });
     if (document.readyState === 'loading') await new Promise((r) => document.addEventListener('DOMContentLoaded', r));
     attach();
 
@@ -502,6 +516,8 @@
       if (Date.now() - stableSince > 20000) break;
       await sleep(2000);
     }
+    // 대시보드가 환산값을 넘겨줄 때까지 최대 1분 더 기다림 (못 받으면 지난번 저장값 사용)
+    for (let w = 0; w < 30 && !gotUnits; w++) { say('환산 기준 받는 중...'); await sleep(2000); }
 
     const keys = pendingKeys();
     const entries = keys.map((k) => GM_getValue(k)).filter(Boolean);
@@ -545,6 +561,7 @@
       const m = ev.data;
       if (!m || m.from !== 'cs-dashboard') return;
       if (m.type === 'ping') { reply({ type: 'pong', token: GITHUB_TOKEN }); return; }
+      if (m.type === 'units' && m.map) { unitMap = m.map; try { GM_setValue('unitMap', unitMap); } catch (e) { /* 무시 */ } return; }
       if (m.type === 'saveCategories') {
         try {
           const changes = m.changes || {};

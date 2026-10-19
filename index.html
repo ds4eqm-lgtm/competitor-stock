@@ -157,8 +157,8 @@
         근무일 기준이에요. 1타임은 직전 근무일 17시부터 그날 07시까지(출근 전), 2타임은 07~17시예요. 큰 숫자가 둘을 합친 전체예요.<br>
         토·일·공휴일 판매량은 다음 근무일 1타임에 합쳐져요. 17시가 지나면 다음 근무일이 진행중이 돼요.<br>
         빨간 '진행중'은 아직 마감 전이라 계속 늘어나는 날이에요.<br>
-        스토어 이름표와 아래 표 스토어명 앞 파란 '▲'는 재고가 한 번에 1,000개 이상 늘어난 곳이에요 (입고 또는 사람이 숫자를 늘림, 판매량에는 영향 없음).<br>
-        주황 '!'는 사람이 재고를 직접 고친 것으로 의심되는 감소가 있는 곳이에요. 합계에서 빠져 있고, 표에서 줄을 눌러 판매로 인정하면 다시 들어가요.
+        스토어 이름표와 아래 표 스토어명 앞 파란 '▲'는 재고가 한 번에 200박스(장판은 200m) 이상 늘어난 곳이에요 (입고 또는 사람이 숫자를 늘림, 판매량에는 영향 없음).<br>
+        주황 '!'는 한 번에 200박스(장판은 200m) 이상 줄어서 사람이 재고를 직접 고친 것으로 의심되는 곳이에요. 합계에서 빠져 있고, 표에서 줄을 눌러 판매로 인정하면 다시 들어가요.
       </div>
     </div>
 
@@ -339,6 +339,14 @@ async function checkTokenHealth(token) {
   el.textContent = msg;
 }
 
+// 탬퍼몽키가 깃허브에 올릴 때도 같은 기준(박스 또는 m)으로 이상재고를 판단하도록 상품별 환산값을 넘겨줌
+function sendUnitsToTracker() {
+  const map = {};
+  Object.keys(historyData).forEach((key) => { const pid = key.split('_')[1]; if (pid && !(pid in map)) map[pid] = unitK(key); });
+  items.forEach((it) => { map[String(it.product)] = unitK(it.key); });
+  sendToTracker({ type: 'units', map });
+}
+
 function setModeLabel() {
   const el = document.getElementById('mode');
   if (!el) return;
@@ -476,7 +484,7 @@ function dayWindow(day) {
 // 하루 판매량 계산
 // s: 판매 / u: 기록이 너무 오래 비어 언제 팔렸는지 모르는 양 / x, ev: 수동변경 의심 / k: 그날 마지막 재고
 // t1, t2: 1타임, 2타임 각각의 s, u, x, ev
-function computeDay(rec, day, flags, now) {
+function computeDay(rec, day, flags, now, key) {
   flags = flags || {};
   const { start, split, end } = dayWindow(day);
   const es = Object.keys(rec).map((t) => ({ t, dt: toDate(t), v: rec[t] })).sort((a, b) => a.dt - b.dt);
@@ -499,7 +507,7 @@ function computeDay(rec, day, flags, now) {
     const per = e.dt < split ? t2 : t1;
     if (d < 0) {
       // 재고가 늘면 판매 아님. 크게 늘었으면 따로 기록만 해 둠
-      if (-d >= DETECT.BIG_RISE) [per, all].forEach((p) => { p.up += -d; p.upEv.push([nx.t, -d, e.v, nx.v]); });
+      if (isBig(key, -d, DETECT.BIG_RISE)) [per, all].forEach((p) => { p.up += -d; p.upEv.push([nx.t, -d, e.v, nx.v]); });
       continue;
     }
     if (d === 0) continue;
@@ -521,9 +529,12 @@ function fmtDT(d) {
 
 // ---------------- 수동 재고변경 감지 설정 (대시보드와 탬퍼몽키 스크립트 값을 똑같이 맞출 것) ----------------
 const DETECT = {
-  BIG_DROP: 1000, // 한 번(보통 1시간) 사이에 이 수량 이상 줄면 사람이 재고를 직접 고친 것으로 의심
-  BIG_RISE: 1000, // 한 번에 이 수량 이상 늘면 '재고 대량 증가'로 표시 (입고 또는 사람이 숫자를 늘린 것, 판매량에는 영향 없음)
+  // 전체 판매 칸과 같은 단위(박스 또는 m)로 비교
+  BIG_DROP: 200, // 한 번(보통 1시간) 사이에 이 양 이상 줄면 사람이 재고를 직접 고친 것으로 의심
+  BIG_RISE: 200, // 한 번에 이 양 이상 늘면 '재고 대량 증가'로 표시 (입고 또는 사람이 숫자를 늘린 것, 판매량에는 영향 없음)
 };
+const isBig = (key, n, lim) => toBox(key, n) >= lim;
+const detectNote = (key, lim) => `${lim}${unitLabel(key)} 이상`;
 
 // 전체 기록에서 수동변경 의심 감소를 찾음
 // 결과: { 옵션키: { 시간키: { d: 감소량, why: [이유...] } } }
@@ -534,10 +545,10 @@ function detectSuspicious(history) {
     const ts = Object.keys(rec).sort();
     for (let i = 1; i < ts.length; i++) {
       const d = rec[ts[i - 1]] - rec[ts[i]];
-      if (d >= DETECT.BIG_DROP) {
+      if (d > 0 && isBig(key, d, DETECT.BIG_DROP)) {
         (out[key] = out[key] || {})[ts[i]] = {
           d,
-          why: [`${rec[ts[i - 1]].toLocaleString()}개에서 ${rec[ts[i]].toLocaleString()}개로 한 번에 ${d.toLocaleString()}개 줄어듦 (${DETECT.BIG_DROP.toLocaleString()}개 이상)`],
+          why: [`${rec[ts[i - 1]].toLocaleString()}개에서 ${rec[ts[i]].toLocaleString()}개로 한 번에 ${fmtQty(key, d)} 줄어듦 (${detectNote(key, DETECT.BIG_DROP)})`],
         };
       }
     }
@@ -655,7 +666,7 @@ function buildDayData(now) {
       for (let g = 0; g < 400 && d <= today; g++) { days.add(d); d = addDays(d, 1); }
     }
     days.forEach((day) => {
-      const r = computeDay(rec, day, flagsAll[it.key], now);
+      const r = computeDay(rec, day, flagsAll[it.key], now, it.key);
       if (r && (r.base || !archive[day] || !archive[day].t1)) seg[day] = r;
       else if (archive[day] && archive[day].t1) seg[day] = Object.assign({ archived: true }, archive[day]);
     });
@@ -918,7 +929,7 @@ function soldCell(v, key) {
   }
   const pend = pendingOf(key, v);
   if (pend > 0) html += `<br><span class="sus" title="줄을 누르면 이유를 보고 판매로 인정할 수 있어요">+${fmtQty(key, pend)} 수동변경 의심</span>`;
-  if (v.up > 0) html += `<br><span class="rise" title="한 번에 ${DETECT.BIG_RISE.toLocaleString()}개 이상 늘어난 기록이 있어요 (입고 또는 사람이 재고 숫자를 늘림)">▲ +${fmtQty(key, v.up)} 재고 증가</span>`;
+  if (v.up > 0) html += `<br><span class="rise" title="한 번에 ${detectNote(key, DETECT.BIG_RISE)} 늘어난 기록이 있어요 (입고 또는 사람이 재고 숫자를 늘림)">▲ +${fmtQty(key, v.up)} 재고 증가</span>`;
   const acc = soldOf(key, v) - v.s;
   if (acc > 0) html += `<br><span class="ok">의심 ${fmtQty(key, acc)} 인정 포함</span>`;
   return html;
@@ -955,7 +966,7 @@ function recordsHtml(key, day, all) {
     list.forEach((e) => {
       const bd = bizDayOf(e.dt);
       if (bd !== lastDay) { html += `<div class="dayhdr">${bd} 영업일</div>`; lastDay = bd; }
-      html += recLine(e, prev, fl);
+      html += recLine(e, prev, fl, key);
       prev = e;
     });
   } else {
@@ -967,21 +978,21 @@ function recordsHtml(key, day, all) {
         html += `<div class="dayhdr">${ns === '1' ? '1타임 (직전 근무일 17시 ~ 07시)' : '2타임 (07~17시)'}</div>`;
         sec = ns;
       }
-      html += recLine(e, prev, fl);
+      html += recLine(e, prev, fl, key);
       prev = e;
     });
   }
   return html + '</div>';
 }
 
-function recLine(e, prev, fl) {
+function recLine(e, prev, fl, key) {
   let diff = '';
   if (e.base) diff = '<span class="base">전날 기준</span>';
   else if (prev) {
     const d = prev.v - e.v;
     if (d > 0 && fl && fl[e.t]) diff = `<span class="s" title="${esc(fl[e.t].why.join(', '))}">-${d.toLocaleString()} 의심</span>`;
     else if (d > 0) diff = `<span class="d">-${d.toLocaleString()}</span>`;
-    else if (d < 0 && -d >= DETECT.BIG_RISE) diff = `<span class="up">▲ +${(-d).toLocaleString()} 대량 증가</span>`;
+    else if (d < 0 && isBig(key, -d, DETECT.BIG_RISE)) diff = `<span class="up">▲ +${(-d).toLocaleString()} 대량 증가</span>`;
     else if (d < 0) diff = `<span class="p">+${(-d).toLocaleString()} 입고</span>`;
     else diff = '<span class="base">변화없음</span>';
   }
@@ -1519,7 +1530,6 @@ async function loadData(isRefresh) {
   if (!saving) approved = appr;
   const latest = JSON.parse(latestF.text);
   historyData = JSON.parse(historyF.text);
-  flagsAll = detectSuspicious(historyData);
   const srcs = [latestF.source, historyF.source];
   lastSource = srcs.includes('pages') ? 'pages' : srcs.includes('raw') ? 'raw' : 'github';
   const sourceLabel = srcs.includes('pages') ? '페이지스 사본(옛날 데이터일 수 있음)' : srcs.includes('raw') ? '깃허브 원본(최대 5분 지연)' : '깃허브 원본';
@@ -1535,6 +1545,8 @@ async function loadData(isRefresh) {
   productOfKey = {};
   catOfKey = {};
   items.forEach((it) => { productOfKey[it.key] = String(it.product); catOfKey[it.key] = catOf(it); });
+  flagsAll = detectSuspicious(historyData);
+  sendUnitsToTracker();
   Object.keys(sheetKeyCache).forEach((k) => delete sheetKeyCache[k]);
   // 사이트 옵션 순서: products.txt 상품 순서 → 상품 안에서는 옵션이 처음 기록된 순서(사이트 순서)
   const optIdx = {};
