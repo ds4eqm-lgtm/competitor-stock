@@ -123,6 +123,9 @@
 
   tr.detail td { background:#fcfcfd; padding:12px 16px 16px; }
   .detail-head { display:flex; gap:12px; align-items:center; margin-bottom:8px; font-size:13px; color:#555; }
+  .unit-ed { font-size:12px; color:#444; background:#f8fafc; border:1px solid #e5e7eb; border-radius:8px; padding:8px 10px; margin-bottom:8px; line-height:1.9; }
+  .unit-ed select, .unit-ed input, .unit-ed button { font-size:12px; padding:3px 6px; border:1px solid #ccc; border-radius:6px; background:#fff; }
+  .unit-ed button { cursor:pointer; }
   .detail-head button { border:1px solid #ccc; background:#fff; border-radius:6px; padding:3px 10px; font-size:12px; cursor:pointer; }
   .recs { display:grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap:4px 16px; font-size:13px; font-variant-numeric: tabular-nums; }
   .recs .r { display:flex; justify-content:space-between; gap:8px; padding:2px 0; border-bottom:1px dotted #eee; }
@@ -442,12 +445,13 @@ function soldOf(key, v) {
 const CAT_UNITS = { 장판: { div: 10, label: 'm' } };
 const DEFAULT_UNIT = { div: 1, label: '박스' };
 let unitDiv = {};      // { 상품번호: {div, label} } 링크별 지정
+let unitOverride = {}; // { 상품번호: {div, label} } 대시보드에서 바꾼 단위 (data/units.json, products.txt보다 우선)
 let productUrl = {};   // { 상품번호: products.txt에 적힌 상품 주소 } 옵션명 누르면 이 주소로 열림
 let productOfKey = {}; // { 옵션키: 상품번호 }
 let catOfKey = {};     // { 옵션키: 분류 }
 function unitOf(key) {
   const pid = productOfKey[key];
-  return unitDiv[pid] || CAT_UNITS[catOfKey[key]] || DEFAULT_UNIT;
+  return unitOverride[pid] || unitDiv[pid] || CAT_UNITS[catOfKey[key]] || DEFAULT_UNIT;
 }
 const unitK = (key) => unitOf(key).div;
 const unitLabel = (key) => unitOf(key).label;
@@ -1133,6 +1137,7 @@ function renderTable() {
           <b>${esc(r.optionName)}</b>
           <button data-toggle-all="${esc(r.it.key)}">${all ? '이 날 기록만 보기' : '전체 기록 보기 (최근 14일)'}</button>
         </div>
+        ${unitEditorHtml(r.it)}
         ${riseHtml(r.v)}
         ${susHtml(r.it.key, r.v)}
         ${recordsHtml(r.it.key, selectedDay, all)}
@@ -1170,6 +1175,7 @@ function renderTable() {
         .finally(() => { saving = false; setModeLabel(); renderAll(); });
     });
   });
+  bindUnitEditor(tbody);
   tbody.querySelectorAll('button[data-toggle-all]').forEach((b) => {
     b.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -1185,6 +1191,66 @@ function renderAll() {
   renderCalendar();
   renderTable();
   renderCalc();
+}
+
+// ---------------- 상품별 단위 설정 (대시보드에서 바꾸기) ----------------
+function unitSource(pid, key) {
+  if (unitOverride[pid]) return '대시보드에서 설정';
+  if (unitDiv[pid]) return 'products.txt 설정';
+  if (CAT_UNITS[catOfKey[key]]) return `${catOfKey[key]} 기본값`;
+  return '기본값';
+}
+function unitEditorHtml(it) {
+  const pid = String(it.product);
+  const u = unitOf(it.key);
+  const isM = u.label === 'm';
+  const n = isM ? Math.round((100 / u.div) * 100) / 100 : u.div;
+  const now = isM ? `1개 = ${n}cm` : u.div > 1 ? `${u.div}장 = 1박스` : '1장 = 1박스';
+  const head = `<b>이 상품 판매 단위</b> 지금: ${now} <span class="small">(${unitSource(pid, it.key)}, 이 링크의 모든 옵션에 적용)</span>`;
+  if (!canEdit) return `<div class="unit-ed">${head} <span class="small">· 바꾸려면 위의 '이 컴퓨터에서도 편집 켜기'를 먼저 해주세요</span></div>`;
+  return `<div class="unit-ed" data-pid="${esc(pid)}">${head}<br>
+    <select data-unit-type><option value="box"${isM ? '' : ' selected'}>박스 단위</option><option value="m"${isM ? ' selected' : ''}>m 단위</option></select>
+    <input type="number" data-unit-n min="0.01" step="any" value="${n}" style="width:70px">
+    <span data-unit-hint>${isM ? 'cm가 1개' : '장이 1박스'}</span>
+    <button data-unit-save>저장</button>
+    ${unitOverride[pid] ? '<button data-unit-reset>products.txt 기준으로 되돌리기</button>' : ''}
+  </div>`;
+}
+async function saveUnit(pid, val) {
+  saving = true; setModeLabel();
+  try {
+    const res = await ghUpdateJson('data/units.json', (obj) => {
+      if (val) obj[pid] = val; else delete obj[pid];
+      return obj;
+    }, `상품 ${pid} 단위 ${val ? (val.label === 'm' ? `1개=${Math.round(100 / val.div)}cm` : `${val.div}장=1박스`) : '되돌리기'}`);
+    unitOverride = res || {};
+    flagsAll = detectSuspicious(historyData); // 이상재고 기준이 단위에 따라 달라짐
+    buildDayData(new Date());
+    sendUnitsToTracker();
+  } catch (e) {
+    alert('단위 저장 실패: ' + e.message);
+  } finally {
+    saving = false; setModeLabel();
+    renderAll();
+  }
+}
+function bindUnitEditor(root) {
+  root.querySelectorAll('.unit-ed[data-pid]').forEach((box) => {
+    const pid = box.dataset.pid;
+    const type = box.querySelector('[data-unit-type]');
+    const num = box.querySelector('[data-unit-n]');
+    const hint = box.querySelector('[data-unit-hint]');
+    type.addEventListener('change', () => { hint.textContent = type.value === 'm' ? 'cm가 1개' : '장이 1박스'; num.value = type.value === 'm' ? 10 : 1; });
+    box.querySelector('[data-unit-save]').addEventListener('click', () => {
+      const n = Number(num.value);
+      if (!(n > 0)) { alert('0보다 큰 숫자를 넣어주세요'); return; }
+      const val = type.value === 'm' ? { div: 100 / n, label: 'm' } : { div: n, label: '박스' };
+      if (!confirm(`이 상품(링크) 모든 옵션의 단위를 ${type.value === 'm' ? `1개 = ${n}cm` : `${n}장 = 1박스`}로 바꿀까요?\n지난 날짜 판매량, 매출 계산도 이 기준으로 다시 계산돼요.`)) return;
+      saveUnit(pid, val);
+    });
+    const rs = box.querySelector('[data-unit-reset]');
+    if (rs) rs.addEventListener('click', () => { if (confirm('products.txt 기준 단위로 되돌릴까요?')) saveUnit(pid, null); });
+  });
 }
 
 // ---------------- 매출 ----------------
@@ -1730,6 +1796,15 @@ async function loadActiveProducts() {
   }
 }
 
+async function loadUnitOverride() {
+  try {
+    const { text } = await fetchRepoFile('data/units.json');
+    return JSON.parse(text) || {};
+  } catch (e) {
+    return {}; // 아직 바꾼 게 없으면 파일이 없음
+  }
+}
+
 async function loadApproved() {
   try {
     const { text } = await fetchRepoFile('data/approved.json');
@@ -1740,12 +1815,14 @@ async function loadApproved() {
 }
 
 async function loadData(isRefresh) {
-  const [latestF, historyF, active, appr] = await Promise.all([
+  const [latestF, historyF, active, appr, uo] = await Promise.all([
     fetchRepoFile('data/latest.json'),
     fetchRepoFile('data/history.json'),
     loadActiveProducts(),
     loadApproved(),
+    loadUnitOverride(),
   ]);
+  unitOverride = uo;
   if (!saving) approved = appr;
   const latest = JSON.parse(latestF.text);
   historyData = JSON.parse(historyF.text);
