@@ -123,6 +123,16 @@
 
   tr.detail td { background:#fcfcfd; padding:12px 16px 16px; }
   .detail-head { display:flex; gap:12px; align-items:center; margin-bottom:8px; font-size:13px; color:#555; }
+  .range-bar { display:flex; flex-wrap:wrap; gap:6px; align-items:center; font-size:13px; margin:6px 0 4px; padding:8px 10px; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; }
+  .range-bar .rg-on { font-weight:700; color:#065f46; cursor:pointer; margin-right:6px; }
+  .range-bar input[type=date], .range-bar select, .range-bar button { font-size:12px; padding:3px 6px; border:1px solid #ccc; border-radius:6px; background:#fff; }
+  .range-bar button { cursor:pointer; }
+  .range-bar.off #rgCtl { opacity:.45; }
+  .rg-total { display:flex; flex-wrap:wrap; gap:16px; font-size:13px; margin:6px 0; padding:8px 12px; background:#ecfdf5; border-radius:8px; }
+  .rg-total b { color:#065f46; font-size:15px; }
+  .rg-days { width:100%; max-width:520px; border-collapse:collapse; font-size:12px; font-variant-numeric:tabular-nums; }
+  .rg-days td, .rg-days th { padding:3px 8px; border-bottom:1px solid #eee; text-align:right; }
+  .rg-days td:first-child, .rg-days th:first-child { text-align:left; }
   .unit-ed { font-size:12px; color:#444; background:#f8fafc; border:1px solid #e5e7eb; border-radius:8px; padding:8px 10px; margin-bottom:8px; line-height:1.9; }
   .unit-ed select, .unit-ed input, .unit-ed button { font-size:12px; padding:3px 6px; border:1px solid #ccc; border-radius:6px; background:#fff; }
   .unit-ed button { cursor:pointer; }
@@ -205,17 +215,26 @@
     <div class="card">
       <div class="day-title" id="dayTitle"></div>
       <div class="day-sub" id="daySub"></div>
+      <div class="range-bar">
+        <label class="rg-on"><input type="checkbox" id="rgOn"> 기간 누계로 보기</label>
+        <span id="rgCtl">
+          <input type="date" id="rgFrom"> ~ <input type="date" id="rgTo">
+          <button data-rq="week">이번 주</button><button data-rq="month">이번 달</button><button data-rq="prev">지난 달</button><button data-rq="7">최근 7일</button><button data-rq="30">최근 30일</button>
+          <select id="rgGroup"><option value="opt">옵션별</option><option value="link">링크(상품)별</option></select>
+        </span>
+      </div>
       <div class="count" id="count"></div>
+      <div id="rgTotal"></div>
       <table>
         <thead>
           <tr>
             <th data-key="store">스토어</th>
             <th data-key="optionName">옵션</th>
             <th data-key="price" class="num">단가</th>
-            <th data-key="s" class="num">전체 판매</th>
-            <th data-key="rev" class="num">매출</th>
-            <th data-key="t1" class="num">1타임<br><span class="th-sub">전 근무일 17시~07시</span></th>
-            <th data-key="t2" class="num">2타임<br><span class="th-sub">07~17시</span></th>
+            <th data-key="s" class="num" id="hS">전체 판매</th>
+            <th data-key="rev" class="num" id="hRev">매출</th>
+            <th data-key="t1" class="num" id="hT1">1타임<br><span class="th-sub">전 근무일 17시~07시</span></th>
+            <th data-key="t2" class="num" id="hT2">2타임<br><span class="th-sub">07~17시</span></th>
             <th data-key="k" class="num" id="stockHead">마감 재고</th>
             <th data-key="last" class="num">최근확인</th>
           </tr>
@@ -962,6 +981,7 @@ function renderCalendar() {
   cal.querySelectorAll('.cal-day[data-day]').forEach((el) => {
     if (el.classList.contains('empty')) return;
     el.addEventListener('click', () => {
+      if (rangeOn) { rangeOn = false; document.getElementById('rgOn').checked = false; document.querySelector('.range-bar').classList.add('off'); document.getElementById('rgTotal').innerHTML = ''; }
       selectedDay = el.dataset.day;
       openKey = null;
       showAllFor = null;
@@ -1091,7 +1111,160 @@ function susHtml(key, v) {
   return html + '</div>';
 }
 
+// ---------------- 기간 누계 표 ----------------
+let rangeOn = false;
+let rangeGroup = 'opt'; // opt: 옵션별, link: 링크(상품)별
+function rangeDays() {
+  let f = document.getElementById('rgFrom').value, t = document.getElementById('rgTo').value;
+  if (!f || !t) { const c = currentDay || ymd(new Date()); f = f || c.slice(0, 8) + '01'; t = t || c; document.getElementById('rgFrom').value = f; document.getElementById('rgTo').value = t; }
+  if (f > t) [f, t] = [t, f];
+  return { from: f, to: t, days: Object.keys(dayData).filter((d) => d >= f && d <= t).sort() };
+}
+// 한 옵션의 기간 합계 { raw, box, won, sellDays, miss, perDay: [[day, raw, won]] }
+function rangeOf(key, days) {
+  const o = { raw: 0, box: 0, won: 0, sellDays: 0, miss: 0, perDay: [] };
+  days.forEach((d) => {
+    const v = dayData[d] && dayData[d][key];
+    if (!v) return;
+    const raw = soldOf(key, v);
+    const p = priceAt(key, d);
+    const won = raw && p != null ? raw * p : 0;
+    if (raw && p == null) o.miss++;
+    if (raw > 0) o.sellDays++;
+    o.raw += raw; o.won += won;
+    o.perDay.push([d, raw, won]);
+  });
+  o.box = toBox(key, o.raw);
+  return o;
+}
+function setTableHeads(range) {
+  document.getElementById('hS').innerHTML = range ? '기간 판매' : '전체 판매';
+  document.getElementById('hRev').innerHTML = range ? '기간 매출' : '매출';
+  document.getElementById('hT1').innerHTML = range ? '일평균 판매<br><span class="th-sub">근무일 기준</span>' : '1타임<br><span class="th-sub">전 근무일 17시~07시</span>';
+  document.getElementById('hT2').innerHTML = range ? '판매한 날<br><span class="th-sub">근무일 수</span>' : '2타임<br><span class="th-sub">07~17시</span>';
+}
+function renderRangeTable() {
+  setTableHeads(true);
+  const { from, to, days } = rangeDays();
+  const n = days.length;
+  document.getElementById('dayTitle').textContent = `기간 누계 ${Number(from.slice(5, 7))}/${Number(from.slice(8))} ~ ${Number(to.slice(5, 7))}/${Number(to.slice(8))}`;
+  document.getElementById('daySub').textContent = `근무일 ${n}일 합계${days.includes(currentDay) ? ' (오늘 진행중 포함)' : ''} · 줄을 누르면 날짜별 판매와 매출이 펼쳐져요`;
+  document.getElementById('stockHead').textContent = '현재 재고';
+  const list = items.filter(matchFilter);
+  let rows;
+  if (rangeGroup === 'link') {
+    const g = {};
+    list.forEach((it) => {
+      const pid = String(it.product);
+      const r = rangeOf(it.key, days);
+      const last = lastRecord(it.key);
+      const pr = priceAt(it.key, to);
+      const x = g[pid] = g[pid] || { it, keys: [], site: it.site, store: it.store, optionName: it.productName || it.optionName || '', raw: 0, s: 0, rev: 0, miss: 0, k: 0, kAny: false, last: '', prices: [], perDay: {}, sellDaySet: new Set(), opts: 0 };
+      x.keys.push(it.key); x.opts++;
+      x.site = Math.min(x.site, it.site);
+      x.s += r.box; x.rev += r.won; x.miss += r.miss;
+      r.perDay.forEach(([d, raw, won]) => { const pd = x.perDay[d] = x.perDay[d] || { box: 0, won: 0 }; pd.box += toBox(it.key, raw); pd.won += won; if (raw > 0) x.sellDaySet.add(d); });
+      if (last) { x.k += Number(last.v) || 0; x.kAny = true; if (last.t > x.last) x.last = last.t; }
+      if (pr != null) x.prices.push(pr);
+    });
+    rows = Object.values(g).map((x) => Object.assign(x, {
+      price: x.prices.length ? Math.min(...x.prices) : -1, priceMax: x.prices.length ? Math.max(...x.prices) : -1,
+      t1: n ? x.s / n : 0, t2: x.sellDaySet.size, k: x.kAny ? x.k : -1, rowKey: 'link:' + x.it.product,
+      perDayList: Object.keys(x.perDay).sort().map((d) => [d, x.perDay[d].box, x.perDay[d].won]),
+    }));
+  } else {
+    rows = list.map((it) => {
+      const r = rangeOf(it.key, days);
+      const last = lastRecord(it.key);
+      const pr = priceAt(it.key, to);
+      return { it, keys: [it.key], site: it.site, store: it.store, optionName: it.optionName || '', s: r.box, rev: r.won, miss: r.miss, t1: n ? r.box / n : 0, t2: r.sellDays,
+        price: pr == null ? -1 : pr, priceMax: pr == null ? -1 : pr, k: last ? Number(last.v) : -1, last: last ? last.t : '', rowKey: it.key,
+        perDayList: r.perDay.map(([d, raw, won]) => [d, toBox(it.key, raw), won]) };
+    });
+  }
+  rows.sort((a, b) => {
+    const av = a[sortKey], bv = b[sortKey];
+    if (typeof av === 'string') return sortAsc ? av.localeCompare(bv) : bv.localeCompare(av);
+    return sortAsc ? av - bv : bv - av;
+  });
+  // 합계
+  const tot = {};
+  let won = 0, miss = 0;
+  rows.forEach((r) => { const lb = unitLabel(r.keys[0]); tot[lb] = (tot[lb] || 0) + r.s; won += r.rev; miss += r.miss; });
+  document.getElementById('rgTotal').innerHTML = `<div class="rg-total"><span>기간 판매 <b>${fmtSums(tot)}</b></span><span>기간 매출 <b>${fmtWonFull(won)}</b></span><span>일평균 매출 <b>${n ? fmtWonFull(won / n) : '0원'}</b></span>${miss ? `<span class="calc-warn">단가 없는 판매 ${miss}건 제외</span>` : ''}</div>`;
+  document.getElementById('count').innerHTML = `${rows.length}개 ${rangeGroup === 'link' ? '링크' : '옵션'} 표시중` +
+    (sortKey !== 'site' ? ' · <a href="#" id="siteSort">사이트 순서로 되돌리기</a>' : ' · 사이트 순서 · 제목을 누르면 정렬돼요 (기간 매출 순 추천)');
+  const ss = document.getElementById('siteSort');
+  if (ss) ss.addEventListener('click', (e) => { e.preventDefault(); sortKey = 'site'; sortAsc = true; renderTable(); });
+  const tbody = document.getElementById('tbody');
+  let html = '';
+  rows.forEach((r) => {
+    const key = r.keys[0];
+    const c = productColor(r.it);
+    const url = productUrl[String(r.it.product)];
+    const name = `${esc(r.optionName)}${rangeGroup === 'link' ? ` <span class="small">옵션 ${r.opts}개</span>` : ''}`;
+    const priceTxt = r.price < 0 ? '<span class="small">-</span>' : r.priceMax > r.price ? `${fmtWonFull(r.price)}<span class="price-sub">~ ${fmtWonFull(r.priceMax)}</span>` : priceCell(key, r.price);
+    html += `<tr class="row" data-key="${esc(r.rowKey)}" style="background:${c ? c.bg : '#fff'}">
+      <td style="font-weight:600;border-left:6px solid ${c ? c.accent : 'transparent'};white-space:nowrap">${esc(r.store)}</td>
+      <td>${url ? `<a class="opt-link" href="${esc(url)}" target="_blank" rel="noopener" title="상품 페이지 새 탭으로 열기">${name}</a>` : name}</td>
+      <td class="num">${priceTxt}</td>
+      <td class="num sold${r.s >= 10 ? ' sold-high' : ''}">${fmtNum(r.s)}${unitLabel(key)}${unitNote(key) ? `<br><span class="small">${unitNote(key)}</span>` : ''}</td>
+      <td class="num" style="color:#047857;font-weight:600">${fmtWonFull(r.rev)}${r.miss ? '<br><span class="small">단가 없는 판매 제외</span>' : ''}</td>
+      <td class="num">${fmtNum(r.t1)}${unitLabel(key)}</td>
+      <td class="num">${r.t2}일</td>
+      <td class="num">${r.k >= 0 ? `${r.k.toLocaleString()}개` : '-'}</td>
+      <td class="num small">${r.last ? r.last.replace('T', ' ') : '-'}</td>
+    </tr>`;
+    if (openKey === r.rowKey) {
+      html += `<tr class="detail"><td colspan="9"><div class="detail-head"><b>${esc(r.optionName)}</b> 날짜별</div>
+        <table class="rg-days"><tr><th>날짜</th><th>판매</th><th>매출</th></tr>${r.perDayList.filter(([, b]) => b > 0).map(([d, b, w]) => `<tr><td>${d.slice(5).replace('-', '/')} (${'일월화수목금토'[toDate(d).getDay()]})</td><td>${fmtNum(b)}${unitLabel(key)}</td><td>${fmtWonFull(w)}</td></tr>`).join('') || '<tr><td colspan="3">이 기간 판매 없음</td></tr>'}</table>
+        ${rangeGroup === 'opt' ? unitEditorHtml(r.it) : ''}
+      </td></tr>`;
+    }
+  });
+  tbody.innerHTML = html;
+  bindUnitEditor(tbody);
+  tbody.querySelectorAll('tr.row').forEach((tr) => {
+    tr.addEventListener('click', (ev) => {
+      if (ev.target.closest('a.opt-link')) return;
+      const k = tr.dataset.key;
+      openKey = openKey === k ? null : k;
+      renderTable();
+    });
+  });
+}
+function rangeSetQuick(q) {
+  const today = currentDay || ymd(new Date());
+  const t = toDate(today);
+  let from, to = today;
+  if (q === 'week') { const d = new Date(t); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); from = ymd(d); }
+  else if (q === 'month') from = today.slice(0, 8) + '01';
+  else if (q === 'prev') { from = ymd(new Date(t.getFullYear(), t.getMonth() - 1, 1)); to = ymd(new Date(t.getFullYear(), t.getMonth(), 0)); }
+  else { const d = new Date(t); d.setDate(d.getDate() - (Number(q) - 1)); from = ymd(d); }
+  document.getElementById('rgFrom').value = from;
+  document.getElementById('rgTo').value = to;
+  setRangeOn(true);
+}
+function setRangeOn(on) {
+  rangeOn = on;
+  document.getElementById('rgOn').checked = on;
+  document.querySelector('.range-bar').classList.toggle('off', !on);
+  if (!on) document.getElementById('rgTotal').innerHTML = '';
+  openKey = null;
+  if (on && sortKey === 's') sortKey = 'rev';
+  renderTable();
+}
+(function initRange() {
+  document.querySelector('.range-bar').classList.add('off');
+  document.getElementById('rgOn').addEventListener('change', (e) => setRangeOn(e.target.checked));
+  ['rgFrom', 'rgTo'].forEach((id) => document.getElementById(id).addEventListener('change', () => setRangeOn(true)));
+  document.getElementById('rgGroup').addEventListener('change', (e) => { rangeGroup = e.target.value; setRangeOn(true); });
+  document.querySelectorAll('.range-bar button[data-rq]').forEach((b) => b.addEventListener('click', () => rangeSetQuick(b.dataset.rq)));
+})();
+
 function renderTable() {
+  if (rangeOn) { renderRangeTable(); return; }
+  setTableHeads(false);
   const live = selectedDay === currentDay;
   const { start, end } = workPeriod(selectedDay);
   const [yy, mm, dd] = selectedDay.split('-').map(Number);
