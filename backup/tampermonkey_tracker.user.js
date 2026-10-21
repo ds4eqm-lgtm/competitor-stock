@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         스마트스토어 판매량 추적기
 // @namespace    competitor-stock-tracker
-// @version      4.7
+// @version      4.8
 // @description  상품페이지가 스스로 불러오는 옵션별 재고 데이터를 읽어서 옵션 단위로 판매추정을 깃허브에 자동 기록
 // @match        https://smartstore.naver.com/*/products/*
 // @match        https://brand.naver.com/*/products/*
@@ -621,6 +621,8 @@
           Object.keys(rec).forEach((t) => { if (t < cutoffStr) delete rec[t]; });
           fine[key] = rec;
         }));
+        // 마지막으로 10분 조회한 시각 (재고가 안 바뀌어도 대시보드에 최근 확인 시각을 보여주려고)
+        fine._meta = { last: entries[entries.length - 1].nowKey, store: entries[0].storeName };
         return fine;
       }, `10분 조회 ${entries[0].storeName} ${entries[entries.length - 1].nowKey}`);
       keys.forEach((k) => GM_deleteValue(k));
