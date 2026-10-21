@@ -186,7 +186,7 @@
       <div class="cal-grid" id="cal"></div>
       <div class="cal-note">
         날짜 칸 숫자는 그날 판매량 합계예요 (위에서 고른 스토어 기준).<br>
-        근무일 기준이에요. 1타임은 직전 근무일 17시부터 그날 07시까지(출근 전), 2타임은 07~17시예요. 큰 숫자가 둘을 합친 전체예요.<br>
+        근무일 기준이에요. 1타임(아침물량)은 직전 근무일 17시 조회부터 그날 07시 조회까지, 2타임(오후물량)은 08시 조회부터 16시 조회까지예요. 큰 숫자가 둘을 합친 전체예요.<br>
         토·일·공휴일 판매량은 다음 근무일 1타임에 합쳐져요. 17시가 지나면 다음 근무일이 진행중이 돼요.<br>
         빨간 '진행중'은 아직 마감 전이라 계속 늘어나는 날이에요.<br>
         스토어 이름표와 아래 표 스토어명 앞 파란 '▲'는 재고가 한 번에 200박스(장판은 200m) 이상 늘어난 곳이에요 (입고 또는 사람이 숫자를 늘림, 판매량에는 영향 없음).<br>
@@ -233,8 +233,8 @@
             <th data-key="price" class="num">단가</th>
             <th data-key="s" class="num" id="hS">전체 판매</th>
             <th data-key="rev" class="num" id="hRev">매출</th>
-            <th data-key="t1" class="num" id="hT1">1타임<br><span class="th-sub">전 근무일 17시~07시</span></th>
-            <th data-key="t2" class="num" id="hT2">2타임<br><span class="th-sub">07~17시</span></th>
+            <th data-key="t1" class="num" id="hT1">1타임 아침물량<br><span class="th-sub">17시~07시 조회</span></th>
+            <th data-key="t2" class="num" id="hT2">2타임 오후물량<br><span class="th-sub">08시~16시 조회</span></th>
             <th data-key="k" class="num" id="stockHead">마감 재고</th>
             <th data-key="last" class="num">최근확인</th>
           </tr>
@@ -246,7 +246,11 @@
 
 <script>
 const DAY_START_HOUR = 7;  // 하루 시작 (07:00 ~ 다음날 07:00)
-const SPLIT_HOUR = 17;     // 2타임(07~17) / 1타임(17~다음날 07) 나누는 시각
+// 재고 감소는 '감소가 시작된 기록 시각'으로 나눔 (= 줄어든 걸 확인한 기록은 그 다음 시각)
+// 2타임(오후물량) = 08시~16시 조회에서 확인된 감소 9번 (07→08 ... 15→16)
+// 1타임(아침물량) = 17시~다음날 07시 조회에서 확인된 감소 15번 (16→17 ... 06→07)
+const SPLIT_HOUR = 16;
+const SWITCH_HOUR = 17;    // 이 시각이 지나면 다음 근무일이 '진행중'
 const LONG_GAP_HOURS = 16; // 기록 사이가 이보다 길게 비면 기간불명으로 따로 표시
 const REPO_API = 'https://api.github.com/repos/yongki9156/competitor-stock/contents/';
 
@@ -686,7 +690,7 @@ function isWorkday(day) {
 const addDays = (day, n) => { const d = toDate(day); d.setDate(d.getDate() + n); return ymd(d); };
 function prevWorkday(day) { let d = addDays(day, -1); for (let i = 0; i < 40 && !isWorkday(d); i++) d = addDays(d, -1); return d; }
 function nextWorkday(day) { let d = addDays(day, 1); for (let i = 0; i < 40 && !isWorkday(d); i++) d = addDays(d, 1); return d; }
-// 근무일 W 의 범위: 1타임 = 직전 근무일 17시 ~ W 07시, 2타임 = W 07시 ~ 17시
+// 근무일 W 의 범위: 1타임 = 직전 근무일 17시 조회 ~ W 07시 조회, 2타임 = W 08시 조회 ~ 16시 조회 (마감 재고 = 16시 기록)
 function workPeriod(day) {
   const start = toDate(prevWorkday(day)); start.setHours(SPLIT_HOUR, 0, 0, 0);
   const split = toDate(day); split.setHours(DAY_START_HOUR, 0, 0, 0);
@@ -697,7 +701,7 @@ function workPeriod(day) {
 function workdayOf(dt) {
   const d = new Date(dt);
   let day = ymd(d);
-  if (isWorkday(day) && d.getHours() < SPLIT_HOUR) return day;
+  if (isWorkday(day) && d.getHours() < SWITCH_HOUR) return day;
   return nextWorkday(day);
 }
 
@@ -721,7 +725,7 @@ function stockAtOrBefore(rec, dt) {
   return best ? best.v : null;
 }
 
-// 날짜별 조각(07~17시, 17시~다음날 07시)을 계산한 다음 근무일 단위로 합침
+// 날짜별 조각(08~16시 조회, 17시~다음날 07시 조회)을 계산한 다음 근무일 단위로 합침
 function buildDayData(now) {
   dayData = {};
   currentDay = workdayOf(now);
@@ -752,7 +756,7 @@ function buildDayData(now) {
       const dayParts = [];
       for (let c = pw; c < w; c = addDays(c, 1)) {
         if (!seg[c]) continue;
-        nightParts.push(seg[c].t1); // c 17시 ~ 다음날 07시
+        nightParts.push(seg[c].t1); // c 17시 조회 ~ 다음날 07시 조회
         if (c !== pw) dayParts.push(seg[c].t2); // 쉬는 날 낮 시간
       }
       const { end } = workPeriod(w);
@@ -1052,9 +1056,10 @@ function recordsHtml(key, day, all) {
     const { split } = workPeriod(day);
     let sec = '';
     list.forEach((e) => {
-      const ns = e.nextDay ? sec : (e.dt < split ? '1' : '2');
+      // 기록 옆 숫자는 직전 기록에서 줄어든 양이라, 그 기록 시각으로 타임을 나눔 (07시 조회까지 1타임)
+      const ns = e.nextDay ? sec : (e.dt <= split ? '1' : '2');
       if (ns !== sec) {
-        html += `<div class="dayhdr">${ns === '1' ? '1타임 (직전 근무일 17시 ~ 07시)' : '2타임 (07~17시)'}</div>`;
+        html += `<div class="dayhdr">${ns === '1' ? '1타임 아침물량 (직전 근무일 17시 조회 ~ 07시 조회)' : '2타임 오후물량 (08시 조회 ~ 16시 조회)'}</div>`;
         sec = ns;
       }
       html += recLine(e, prev, fl, key);
@@ -1140,8 +1145,8 @@ function rangeOf(key, days) {
 function setTableHeads(range) {
   document.getElementById('hS').innerHTML = range ? '기간 판매' : '전체 판매';
   document.getElementById('hRev').innerHTML = range ? '기간 매출' : '매출';
-  document.getElementById('hT1').innerHTML = range ? '일평균 판매<br><span class="th-sub">근무일 기준</span>' : '1타임<br><span class="th-sub">전 근무일 17시~07시</span>';
-  document.getElementById('hT2').innerHTML = range ? '판매한 날<br><span class="th-sub">근무일 수</span>' : '2타임<br><span class="th-sub">07~17시</span>';
+  document.getElementById('hT1').innerHTML = range ? '일평균 판매<br><span class="th-sub">근무일 기준</span>' : '1타임 아침물량<br><span class="th-sub">17시~07시 조회</span>';
+  document.getElementById('hT2').innerHTML = range ? '판매한 날<br><span class="th-sub">근무일 수</span>' : '2타임 오후물량<br><span class="th-sub">08시~16시 조회</span>';
 }
 function renderRangeTable() {
   setTableHeads(true);
@@ -1790,7 +1795,7 @@ function downloadExcel() {
   const wb = XLSX.utils.book_new();
 
   // 1. 일별 판매 (한 줄 = 하루 x 옵션)
-  const daily = [['날짜', '스토어', '상품명', '옵션', '전체 판매', '1타임(17~07시)', '2타임(07~17시)', '기간불명', '수동변경의심(미인정)', '마감재고', '단위', '비고']];
+  const daily = [['날짜', '스토어', '상품명', '옵션', '전체 판매', '1타임 아침물량(17~07시 조회)', '2타임 오후물량(08~16시 조회)', '기간불명', '수동변경의심(미인정)', '마감재고', '단위', '비고']];
   days.forEach((day) => {
     items.forEach((it) => {
       const v = dayData[day][it.key];

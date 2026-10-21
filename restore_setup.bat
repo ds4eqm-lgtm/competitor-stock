@@ -19,8 +19,9 @@ if exist "competitor-stock\.git" (
 )
 echo [2/4] Registering hourly auto check
 schtasks /create /tn "CompetitorStockHourly" /sc hourly /mo 1 /st 00:01 /tr "\"%cd%\auto_open.bat\"" /f
-echo [3/4] Registering daily shutdown 18:10
-schtasks /create /tn "CompetitorStockShutdown" /sc daily /st 18:10 /tr "shutdown /s /t 300 /c \"PC will shut down in 5 minutes. To cancel: Win+R, type shutdown /a\"" /f
+echo [3/4] 24-hour mode: no auto shutdown, no sleep
+powercfg /change standby-timeout-ac 0
+powercfg /change hibernate-timeout-ac 0
 echo [4/4] Opening Tampermonkey script backup folder
 explorer "%cd%\backup"
 echo.
