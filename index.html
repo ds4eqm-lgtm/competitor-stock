@@ -133,6 +133,8 @@
   .rg-days { width:100%; max-width:520px; border-collapse:collapse; font-size:12px; font-variant-numeric:tabular-nums; }
   .rg-days td, .rg-days th { padding:3px 8px; border-bottom:1px solid #eee; text-align:right; }
   .rg-days td:first-child, .rg-days th:first-child { text-align:left; }
+  .recs .r.fine { background:#fef08a; border-radius:4px; }
+  .fine-t { background:#fef08a; border-radius:4px; padding:1px 4px; }
   .unit-ed { font-size:12px; color:#444; background:#f8fafc; border:1px solid #e5e7eb; border-radius:8px; padding:8px 10px; margin-bottom:8px; line-height:1.9; }
   .unit-ed select, .unit-ed input, .unit-ed button { font-size:12px; padding:3px 6px; border:1px solid #ccc; border-radius:6px; background:#fff; }
   .unit-ed button { cursor:pointer; }
@@ -191,6 +193,7 @@
         빨간 '진행중'은 아직 마감 전이라 계속 늘어나는 날이에요.<br>
         스토어 이름표와 아래 표 스토어명 앞 파란 '▲'는 재고가 한 번에 200박스(장판은 200m) 이상 늘어난 곳이에요 (입고 또는 사람이 숫자를 늘림, 판매량에는 영향 없음).<br>
         주황 '!'는 한 번에 200박스(장판은 200m) 이상 줄어서 사람이 재고를 직접 고친 것으로 의심되는 곳이에요. 합계에서 빠져 있고, 표에서 줄을 눌러 판매로 인정하면 다시 들어가요.<br>
+        노란색 칸은 10분 조회(도든 등)로 들어온 기록이에요. 정시 전체 조회 기록은 색이 없어요.<br>
         초록 금액은 그날 추정 매출이에요 (판매 수량 × 그날 상품 페이지 할인가).
       </div>
       <div class="calc">
@@ -1082,8 +1085,11 @@ function recLine(e, prev, fl, key) {
     else if (d < 0) diff = `<span class="p">+${(-d).toLocaleString()} 입고</span>`;
     else diff = '<span class="base">변화없음</span>';
   }
-  return `<div class="r"><span>${fmtDT(e.dt)}${e.nextDay ? ' (다음 기록)' : ''}</span><span>${e.v.toLocaleString()}개</span><span>${diff}</span></div>`;
+  return `<div class="r${isFineT(e.t) ? ' fine' : ''}"${isFineT(e.t) ? ' title="10분 조회 기록"' : ''}><span>${fmtDT(e.dt)}${e.nextDay ? ' (다음 기록)' : ''}</span><span>${e.v.toLocaleString()}개</span><span>${diff}</span></div>`;
 }
+// 10분 조회 기록인지 (정시 조회는 HH:00, 10분 조회는 05분, 15분처럼 정시가 아님)
+const isFineT = (t) => !!t && !/T\d\d:00$/.test(t);
+const lastCell = (t) => (t ? `<span class="${isFineT(t) ? 'fine-t' : ''}"${isFineT(t) ? ' title="10분 조회 기록"' : ''}>${t.replace('T', ' ')}</span>` : '-');
 
 function slotCell(p, key) {
   if (!p) return '<span class="small">-</span>';
@@ -1220,7 +1226,7 @@ function renderRangeTable() {
       <td class="num">${fmtNum(r.t1)}${unitLabel(key)}</td>
       <td class="num">${r.t2}일</td>
       <td class="num">${r.k >= 0 ? `${r.k.toLocaleString()}개` : '-'}</td>
-      <td class="num small">${r.last ? r.last.replace('T', ' ') : '-'}</td>
+      <td class="num small">${lastCell(r.last)}</td>
     </tr>`;
     if (openKey === r.rowKey) {
       html += `<tr class="detail"><td colspan="9"><div class="detail-head"><b>${esc(r.optionName)}</b> 날짜별</div>
@@ -1317,7 +1323,7 @@ function renderTable() {
       <td class="num">${slotCell(r.v && r.v.t1, r.it.key)}</td>
       <td class="num">${slotCell(r.v && r.v.t2, r.it.key)}</td>
       <td class="num">${r.v ? `${Number(r.v.k).toLocaleString()}개` : '-'}</td>
-      <td class="num small">${last ? last.t.replace('T', ' ') : '-'}</td>
+      <td class="num small">${lastCell(last && last.t)}</td>
     </tr>`;
     if (openKey === r.it.key) {
       const all = showAllFor === r.it.key;
