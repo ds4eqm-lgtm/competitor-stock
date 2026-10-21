@@ -1038,7 +1038,8 @@ function recordsHtml(key, day, all) {
     list = entries.filter((e) => e.dt >= start && e.dt < end);
     // 마지막 구간 줄어든 양은 다음 기록과의 차이라서 그 기록도 같이 보여줌
     const next = entries.find((e) => e.dt >= end);
-    if (list.length && next) list.push(Object.assign({ nextDay: true }, next));
+    // 16시 마감 기록은 2타임 마지막 조회라 그대로 넣고, 16시 기록이 없을 때만 그 다음 기록을 '다음 기록'으로 붙임
+    if (list.length && next) list.push(next.dt.getTime() === end.getTime() ? next : Object.assign({ nextDay: true }, next));
   }
   if (!list.length) return '<div class="small">이 날 기록 없음</div>';
 
@@ -1053,13 +1054,14 @@ function recordsHtml(key, day, all) {
       prev = e;
     });
   } else {
-    const { split } = workPeriod(day);
+    const { start, split } = workPeriod(day);
     let sec = '';
     list.forEach((e) => {
       // 기록 옆 숫자는 직전 기록에서 줄어든 양이라, 그 기록 시각으로 타임을 나눔 (07시 조회까지 1타임)
-      const ns = e.nextDay ? sec : (e.dt <= split ? '1' : '2');
+      // 맨 앞 16시 기록은 직전 근무일 마감 재고라 판매 계산의 기준으로만 씀
+      const ns = e.nextDay ? sec : e.dt.getTime() <= start.getTime() ? '0' : (e.dt <= split ? '1' : '2');
       if (ns !== sec) {
-        html += `<div class="dayhdr">${ns === '1' ? '1타임 아침물량 (직전 근무일 17시 조회 ~ 07시 조회)' : '2타임 오후물량 (08시 조회 ~ 16시 조회)'}</div>`;
+        html += `<div class="dayhdr">${ns === '0' ? '기준 재고 (직전 근무일 16시 마감, 판매에 안 들어감)' : ns === '1' ? '1타임 아침물량 (직전 근무일 17시 조회 ~ 07시 조회)' : '2타임 오후물량 (08시 조회 ~ 16시 조회)'}</div>`;
         sec = ns;
       }
       html += recLine(e, prev, fl, key);
@@ -1274,7 +1276,8 @@ function renderTable() {
   const { start, end } = workPeriod(selectedDay);
   const [yy, mm, dd] = selectedDay.split('-').map(Number);
   document.getElementById('dayTitle').textContent = `${yy}년 ${mm}월 ${dd}일 판매량${live ? ' (진행중)' : ''}`;
-  document.getElementById('daySub').textContent = `${fmtDT(start)} ~ ${live ? '지금' : fmtDT(end)} 기준 · 줄을 누르면 시간별 재고 기록이 펼쳐져요`;
+  const firstCheck = new Date(start.getTime() + 3600000); // 직전 근무일 16시 마감 다음 조회 = 17시
+  document.getElementById('daySub').textContent = `${fmtDT(firstCheck)} 조회 ~ ${live ? '지금' : `${fmtDT(end)} 조회`} 기준 (직전 근무일 16시 마감 재고에서 줄어든 양) · 줄을 누르면 시간별 재고 기록이 펼쳐져요`;
   document.getElementById('stockHead').textContent = live ? '현재 재고' : '마감 재고';
 
   const dd0 = dayData[selectedDay] || {};
