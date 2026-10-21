@@ -17,7 +17,7 @@
 1. 새 PC에 크롬 설치 후 네이버 로그인
 2. https://git-scm.com 에서 Git 설치, 설치 화면은 전부 다음 눌러도 됨
 3. 깃허브 사이트 competitor-stock 저장소에서 restore_setup.bat 받아서 바탕화면에 두고 더블클릭
-4. 바탕화면에 competitor-stock 폴더가 생기고 매시 자동조회, 18시10분 자동종료가 등록됨
+4. 바탕화면에 competitor-stock 폴더가 생기고 매시 자동조회가 등록되고 절전이 꺼짐 (24시간 켜두는 방식, 자동종료 없음)
 5. 크롬에 Tampermonkey 확장 설치
 6. 탬퍼몽키 아이콘 → 새 스크립트 만들기 → 안에 있는 내용 전부 지우기
 7. backup\tampermonkey_tracker.user.js 를 메모장으로 열어 전체 복사 → 붙여넣기
