@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         스마트스토어 판매량 추적기
 // @namespace    competitor-stock-tracker
-// @version      4.6
+// @version      4.7
 // @description  상품페이지가 스스로 불러오는 옵션별 재고 데이터를 읽어서 옵션 단위로 판매추정을 깃허브에 자동 기록
 // @match        https://smartstore.naver.com/*/products/*
 // @match        https://brand.naver.com/*/products/*
@@ -43,12 +43,18 @@
 
   // ---------------- 자동조회로 열린 탭이면 작업 끝나고 탭 닫기 ----------------
   // 자동조회 bat이 주소 끝에 #autotrack 을 붙여서 연다. 직접 연 탭은 절대 안 닫음
+  // #autotrack-fine 은 10분 조회(도든 등 일부 스토어만) → 결과는 data/history_fine.json 에 따로 올림
   let autoMode = false;
+  let fineMode = false;
   try {
     if (window.location.hash === '#autotrack') sessionStorage.setItem('autotrack', '1');
-    autoMode = sessionStorage.getItem('autotrack') === '1';
+    if (window.location.hash === '#autotrack-fine') sessionStorage.setItem('autotrack', 'fine');
+    const st = sessionStorage.getItem('autotrack');
+    autoMode = st === '1' || st === 'fine';
+    fineMode = st === 'fine';
   } catch (e) {
-    autoMode = window.location.hash === '#autotrack';
+    autoMode = window.location.hash === '#autotrack' || window.location.hash === '#autotrack-fine';
+    fineMode = window.location.hash === '#autotrack-fine';
   }
 
   function closeAutoTab() {
@@ -486,6 +492,17 @@
       options,
     };
 
+    if (fineMode) {
+      // 10분 조회 탭: 실제 조회한 분까지 기록 (예: 14:05), #flushfine 페이지가 history_fine.json 에 올림
+      // 정시 조회(14:00 기록, 14:01~02에 읽음)와 순서가 섞이지 않도록 10분 조회는 매시 05분부터 돌림
+      entry.nowKey = `${today}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+      GM_setValue(`fine_${productNo}_${entry.nowKey}`, entry);
+      console.log(`[판매량추적] ${entry.storeName} 10분 조회 대기열에 넣음 - 옵션 ${options.length}개`);
+      finished = true;
+      closeAutoTab();
+      return;
+    }
+
     if (autoMode) {
       // 자동조회 탭: 깃허브에 바로 안 올리고 탬퍼몽키 저장소에만 넣고 바로 닫음
       // 모든 탭이 끝나면 bat이 여는 정리용 페이지(#flush)가 한꺼번에 올림 → 탭이 서로 기다리지 않음
@@ -569,9 +586,59 @@
     setTimeout(() => window.close(), 5000);
   }
 
+  // ---------------- 10분 조회 결과 올리기 (data/history_fine.json) ----------------
+  // 재고가 바뀐 시점만 저장해서 파일을 작게 유지. 대시보드가 history.json 과 합쳐서 보여줌
+  async function flushFine() {
+    const box = document.createElement('div');
+    box.style.cssText = 'position:fixed;top:12px;right:12px;z-index:99999;background:#1e3a8a;color:#fff;padding:12px 16px;border-radius:8px;font:14px sans-serif;';
+    const say = (t) => { box.textContent = '[판매량추적 10분] ' + t; console.log('[판매량추적 10분] ' + t); };
+    if (document.readyState === 'loading') await new Promise((r) => document.addEventListener('DOMContentLoaded', r));
+    document.body.appendChild(box);
+    const fineKeys = () => GM_listValues().filter((k) => k.startsWith('fine_'));
+    let last = -1, stableSince = Date.now();
+    const startAt = Date.now();
+    while (Date.now() - startAt < 120000) {
+      const n = fineKeys().length;
+      if (n !== last) { last = n; stableSince = Date.now(); }
+      say(`조회 결과 모으는 중... ${n}개 상품`);
+      if (Date.now() - stableSince > 10000) break;
+      await sleep(2000);
+    }
+    const keys = fineKeys();
+    const entries = keys.map((k) => GM_getValue(k)).filter(Boolean).sort((a, b) => (a.nowKey < b.nowKey ? -1 : a.nowKey > b.nowKey ? 1 : 0));
+    if (!entries.length) { say('올릴 결과 없음'); setTimeout(() => window.close(), 3000); return; }
+    const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - HISTORY_KEEP_DAYS);
+    const cutoffStr = ymd(cutoff);
+    try {
+      say(`${entries.length}개 상품 올리는 중...`);
+      await updateJsonFile('data/history_fine.json', (fine) => {
+        entries.forEach((en) => en.options.forEach((opt) => {
+          const key = `${en.channelId}_${en.productNo}_${opt.id}`;
+          const rec = fine[key] || {};
+          const ts = Object.keys(rec).sort();
+          const prev = ts.length ? rec[ts[ts.length - 1]] : null;
+          if (prev !== opt.stock) rec[en.nowKey] = opt.stock; // 바뀐 때만 기록
+          Object.keys(rec).forEach((t) => { if (t < cutoffStr) delete rec[t]; });
+          fine[key] = rec;
+        }));
+        return fine;
+      }, `10분 조회 ${entries[0].storeName} ${entries[entries.length - 1].nowKey}`);
+      keys.forEach((k) => GM_deleteValue(k));
+      say(`${entries.length}개 상품 업로드 완료`);
+    } catch (e) {
+      box.style.background = '#b91c1c';
+      say(`업로드 실패: ${(e && e.message) || e}. 결과는 보관했다가 다음 10분 조회 때 같이 올려요.`);
+    }
+    setTimeout(() => window.close(), 5000);
+  }
+
   // ---------------- 대시보드 연결 (판매 인정 내역을 깃허브 data/approved.json 에 저장) ----------------
   if (isDashboard && window.location.hash === '#flush') {
     flushPending();
+    return;
+  }
+  if (isDashboard && window.location.hash === '#flushfine') {
+    flushFine();
     return;
   }
 
