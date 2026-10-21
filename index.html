@@ -2021,11 +2021,27 @@ async function loadData(isRefresh) {
   if (!saving) approved = appr;
   const latest = JSON.parse(latestF.text);
   historyData = JSON.parse(historyF.text);
+  // 전체(정시) 조회 최근 시각은 10분 조회를 합치기 전에 history.json 기준으로 구함
+  let hourTs = '';
+  Object.values(historyData).forEach((rec) => { Object.keys(rec || {}).forEach((t) => { if (t > hourTs) hourTs = t; }); });
   // 10분 조회(도든 등) 기록을 시간별 기록에 합침. 같은 시각이 겹치면 시간별 기록 우선
+  let fineTs = '', fineStore = '';
   if (fineText) {
     try {
       const fine = JSON.parse(fineText) || {};
-      Object.keys(fine).forEach((key) => { historyData[key] = Object.assign({}, fine[key], historyData[key] || {}); });
+      const meta = fine._meta || {};
+      delete fine._meta;
+      fineStore = meta.store || '';
+      fineTs = meta.last || '';
+      Object.keys(fine).forEach((key) => {
+        if (!meta.last) Object.keys(fine[key] || {}).forEach((t) => { if (t > fineTs) fineTs = t; }); // 4.7 이하: 바뀐 기록 중 마지막
+        historyData[key] = Object.assign({}, fine[key], historyData[key] || {});
+      });
+      if (!fineStore) {
+        const k0 = Object.keys(fine)[0];
+        const it0 = k0 && latest[k0];
+        fineStore = it0 ? it0.store : '';
+      }
     } catch (e) { /* 무시 */ }
   }
   const srcs = [latestF.source, historyF.source];
@@ -2062,14 +2078,11 @@ async function loadData(isRefresh) {
     return;
   }
 
-  let maxTs = '';
-  items.forEach((it) => {
-    const ts = Object.keys(historyData[it.key] || {}).sort().pop();
-    if (ts && ts > maxTs) maxTs = ts;
-  });
+  const maxTs = hourTs;
   const lagH = maxTs ? (Date.now() - toDate(maxTs).getTime()) / 3600000 : 0;
+  const fineLagM = fineTs ? (Date.now() - toDate(fineTs).getTime()) / 60000 : 0;
   document.getElementById('updated').textContent = maxTs
-    ? `데이터 기준 최근 확인: ${maxTs.replace('T', ' ')}  ·  출처: ${sourceLabel}${lagH > 3 ? '  ·  3시간 넘게 새 기록 없음, 관리용 컴퓨터 자동조회 확인 필요' : ''}`
+    ? `전체 조회 최근: ${maxTs.replace('T', ' ')}${fineTs ? `  ·  ${fineStore || '10분'} 10분 조회 최근: ${fineTs.replace('T', ' ')}` : ''}  ·  출처: ${sourceLabel}${lagH > 3 ? '  ·  3시간 넘게 새 기록 없음, 관리용 컴퓨터 자동조회 확인 필요' : ''}${fineTs && fineLagM > 40 ? `  ·  ${fineStore || ''} 10분 조회가 40분 넘게 멈춤` : ''}`
     : '데이터 없음';
 
   const now = new Date();
