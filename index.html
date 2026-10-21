@@ -2009,17 +2009,25 @@ async function loadApproved() {
 }
 
 async function loadData(isRefresh) {
-  const [latestF, historyF, active, appr, uo] = await Promise.all([
+  const [latestF, historyF, active, appr, uo, fineText] = await Promise.all([
     fetchRepoFile('data/latest.json'),
     fetchRepoFile('data/history.json'),
     loadActiveProducts(),
     loadApproved(),
     loadUnitOverride(),
+    fetchRepoFile('data/history_fine.json').then((f) => f.text).catch(() => ''),
   ]);
   unitOverride = uo;
   if (!saving) approved = appr;
   const latest = JSON.parse(latestF.text);
   historyData = JSON.parse(historyF.text);
+  // 10분 조회(도든 등) 기록을 시간별 기록에 합침. 같은 시각이 겹치면 시간별 기록 우선
+  if (fineText) {
+    try {
+      const fine = JSON.parse(fineText) || {};
+      Object.keys(fine).forEach((key) => { historyData[key] = Object.assign({}, fine[key], historyData[key] || {}); });
+    } catch (e) { /* 무시 */ }
+  }
   const srcs = [latestF.source, historyF.source];
   lastSource = srcs.includes('pages') ? 'pages' : srcs.includes('raw') ? 'raw' : 'github';
   const sourceLabel = srcs.includes('pages') ? '페이지스 사본(옛날 데이터일 수 있음)' : srcs.includes('raw') ? '깃허브 원본(최대 5분 지연)' : '깃허브 원본';
