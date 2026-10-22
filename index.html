@@ -80,8 +80,19 @@
   .hm-tbl th.hm-name, .hm-tbl td.hm-name { width:96px; text-align:left; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:11px; color:#333; padding-right:4px; }
   .hm-tbl td.hm-c { height:22px; border-radius:3px; background:#f1f5f9; cursor:default; }
   .hm-tbl td.hm-c.pk { outline:2px solid #1e3a8a; outline-offset:-2px; }
-  .hm-top { font-size:12px; color:#333; margin-top:8px; line-height:1.7; }
-  .hm-top b { color:#1e3a8a; }
+  .hr-tbl { width:100%; border-collapse:collapse; margin-top:10px; font-size:12px; table-layout:fixed; font-variant-numeric:tabular-nums; }
+  .hr-tbl th { font-size:11px; color:#666; font-weight:600; text-align:center; padding:4px 2px; border-bottom:1px solid #e5e7eb; background:#fafafa; }
+  .hr-tbl th:first-child { text-align:left; width:92px; }
+  .hr-tbl td { padding:5px 4px; border-bottom:1px solid #f1f5f9; vertical-align:middle; }
+  .hr-n { font-weight:600; color:#333; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .hr-c { text-align:center; }
+  .hr-h { font-weight:700; font-size:13px; color:#333; }
+  .hr-1 .hr-h { color:#1e3a8a; font-size:14px; }
+  .hr-w .hr-h { color:#047857; }
+  .hr-bar { height:4px; background:#eef2f7; border-radius:2px; margin:3px 4px; overflow:hidden; }
+  .hr-bar span { display:block; height:100%; background:#1e3a8a; border-radius:2px; }
+  .hr-w .hr-bar span { background:#047857; }
+  .hr-s { font-size:10px; color:#777; font-weight:400; white-space:nowrap; }
   .hm-legend { font-size:11px; color:#666; margin-top:6px; line-height:1.6; }
   .hm-legend span.sw { vertical-align:middle; margin:0 1px; }
   .hm-legend span.sw { display:inline-block; width:16px; height:10px; border-radius:2px; }
@@ -1612,7 +1623,7 @@ function renderHeatmap(from, to, fn) {
       row.total += q;
     }
   });
-  const labels = Object.keys(rows).filter((k) => rows[k].total > 0).sort((x, y) => rows[y].total - rows[x].total);
+  const labels = Object.keys(rows).filter((k) => rows[k].total > 0).sort((x, y) => x.localeCompare(y, 'ko'));
   if (!labels.length) { out.innerHTML = '<div class="small">이 기간에는 시간대를 알 수 있는 판매 기록이 없어요.</div>'; return; }
   const cell = (v, max, name, h, unit) => {
     const a = max ? v / max : 0;
@@ -1631,13 +1642,22 @@ function renderHeatmap(from, to, fn) {
   });
   html += '</table>';
   html += `<div class="hm-legend">적음 <span class="sw" style="background:rgba(30,58,138,.15)"></span><span class="sw" style="background:rgba(30,58,138,.5)"></span><span class="sw" style="background:rgba(30,58,138,.9)"></span> 많음<br>줄마다 그 브랜드에서 가장 많이 팔린 시간이 제일 진하고 테두리가 있어요. 칸에 마우스를 올리면 수량이 나와요.</div>`;
-  html += '<div class="hm-top">';
+  // 브랜드별 많이 팔린 시간 1~3위 + 가장 몰리는 연속 3시간
+  const topCell = (t, r, first) => {
+    if (!t) return '<td class="hr-c">-</td>';
+    const pct = Math.round((t[1] / r.total) * 100);
+    return `<td class="hr-c${first ? ' hr-1' : ''}"><div class="hr-h">${t[0]}시</div><div class="hr-bar"><span style="width:${Math.min(100, pct * 2)}%"></span></div><div class="hr-s">${pct}% · ${fmtNum(t[1])}${r.unit}</div></td>`;
+  };
+  html += '<table class="hr-tbl"><tr><th>스토어</th><th>1위</th><th>2위</th><th>3위</th><th>몰리는 3시간</th></tr>';
   labels.forEach((k) => {
     const r = rows[k];
     const top = r.h.map((v, h) => [h, v]).filter(([, v]) => v > 0).sort((x, y) => y[1] - x[1]).slice(0, 3);
-    html += `${esc(k)}: ${top.map(([h, v], i) => `${i === 0 ? '<b>' : ''}${h}시대 ${fmtNum(v)}${r.unit} (${Math.round((v / r.total) * 100)}%)${i === 0 ? '</b>' : ''}`).join(', ')}<br>`;
+    let best = -1, bestSum = -1;
+    for (let h = 0; h < 24; h++) { const sum = r.h[h] + r.h[(h + 1) % 24] + r.h[(h + 2) % 24]; if (sum > bestSum) { bestSum = sum; best = h; } }
+    const wPct = Math.round((bestSum / r.total) * 100);
+    html += `<tr><td class="hr-n" title="합계 ${fmtNum(r.total)}${r.unit}">${esc(k)}<div class="hr-s">합계 ${fmtNum(r.total)}${r.unit}</div></td>${topCell(top[0], r, true)}${topCell(top[1], r)}${topCell(top[2], r)}<td class="hr-c hr-w"><div class="hr-h">${best}~${(best + 3) % 24}시</div><div class="hr-bar"><span style="width:${wPct}%"></span></div><div class="hr-s">${wPct}%</div></td></tr>`;
   });
-  html += '</div>';
+  html += '</table>';
   if (skipped) html += `<div class="small" style="margin-top:4px">기록이 90분 넘게 비어 시간대를 알 수 없는 감소 ${skipped}건은 뺐어요 (컴퓨터 꺼짐 등). 최근 14일 시간별 기록 기준이에요.</div>`;
   else html += '<div class="small" style="margin-top:4px">최근 14일 시간별 기록 기준이에요.</div>';
   out.innerHTML = html;
