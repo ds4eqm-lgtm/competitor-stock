@@ -1592,13 +1592,17 @@ function calcSetRange(q) {
 }
 // ---------------- 브랜드별 시간대 판매 (히트맵) ----------------
 // 재고가 줄어든 구간의 시작 시각으로 시간대를 정함 (13:00→14:00 사이 감소 = 13시대)
-// 기록 사이가 90분 넘게 비었으면 언제 팔렸는지 몰라서 뺌. 수동변경 의심은 판매로 인정한 것만 넣음
-function renderHeatmap(from, to, fn) {
+// 기간은 매출 계산기와 똑같이 근무일 기준 (첫 근무일의 직전 근무일 16시 ~ 마지막 근무일 16시, 진행중이면 지금까지)
+// 기록 사이가 90분 넘게 비었으면 언제 팔렸는지 몰라서 '시간 모름'으로 따로 셈 (합계에는 포함). 수동변경 의심은 판매로 인정한 것만 넣음
+function renderHeatmap(days, fn) {
   const out = document.getElementById('hmOut');
   if (!out) return;
+  if (!days.length) { out.innerHTML = '<div class="small">이 기간에는 판매 기록이 없어요.</div>'; return; }
   const dow = document.getElementById('hmDow').value;
-  const start = toDate(from); const end = toDate(to); end.setDate(end.getDate() + 1);
-  const rows = {}; // label -> { h: [24], unit, total }
+  const start = workPeriod(days[0]).start;
+  const lastEnd = workPeriod(days[days.length - 1]).end;
+  const end = lastEnd > new Date() ? new Date() : lastEnd;
+  const rows = {}; // label -> { h: [24], unit, total, unk }
   let skipped = 0;
   items.forEach((it) => {
     if (!fn(it)) return;
@@ -1607,7 +1611,7 @@ function renderHeatmap(from, to, fn) {
     const fl = flagsAll[it.key] || {};
     const ts = Object.keys(rec).sort();
     const label = it.store;
-    const row = rows[label] = rows[label] || { h: new Array(24).fill(0), unit: unitLabel(it.key), total: 0 };
+    const row = rows[label] = rows[label] || { h: new Array(24).fill(0), unit: unitLabel(it.key), total: 0, unk: 0 };
     for (let i = 0; i + 1 < ts.length; i++) {
       const a = toDate(ts[i]);
       if (a < start || a >= end) continue;
@@ -1617,13 +1621,13 @@ function renderHeatmap(from, to, fn) {
       const d = rec[ts[i]] - rec[ts[i + 1]];
       if (d <= 0) continue;
       if (fl[ts[i + 1]] && !approved.has(evId(it.key, ts[i + 1]))) continue;
-      if ((toDate(ts[i + 1]) - a) / 60000 > 90) { skipped++; continue; }
       const q = toBox(it.key, d);
+      if ((toDate(ts[i + 1]) - a) / 60000 > 90) { skipped++; row.unk += q; continue; }
       row.h[a.getHours()] += q;
       row.total += q;
     }
   });
-  const labels = Object.keys(rows).filter((k) => rows[k].total > 0).sort((x, y) => x.localeCompare(y, 'ko'));
+  const labels = Object.keys(rows).filter((k) => rows[k].total > 0 || rows[k].unk > 0).sort((x, y) => x.localeCompare(y, 'ko'));
   if (!labels.length) { out.innerHTML = '<div class="small">이 기간에는 시간대를 알 수 있는 판매 기록이 없어요.</div>'; return; }
   const cell = (v, max, name, h, unit) => {
     const a = max ? v / max : 0;
@@ -1645,7 +1649,7 @@ function renderHeatmap(from, to, fn) {
   // 브랜드별 많이 팔린 시간 1~3위 + 가장 몰리는 연속 3시간
   const topCell = (t, r, first) => {
     if (!t) return '<td class="hr-c">-</td>';
-    const pct = Math.round((t[1] / r.total) * 100);
+    const pct = r.total ? Math.round((t[1] / r.total) * 100) : 0;
     return `<td class="hr-c${first ? ' hr-1' : ''}"><div class="hr-h">${t[0]}시</div><div class="hr-bar"><span style="width:${Math.min(100, pct * 2)}%"></span></div><div class="hr-s">${pct}% · ${fmtNum(t[1])}${r.unit}</div></td>`;
   };
   html += '<table class="hr-tbl"><tr><th>스토어</th><th>1위</th><th>2위</th><th>3위</th><th>몰리는 3시간</th></tr>';
@@ -1654,12 +1658,11 @@ function renderHeatmap(from, to, fn) {
     const top = r.h.map((v, h) => [h, v]).filter(([, v]) => v > 0).sort((x, y) => y[1] - x[1]).slice(0, 3);
     let best = -1, bestSum = -1;
     for (let h = 0; h < 24; h++) { const sum = r.h[h] + r.h[(h + 1) % 24] + r.h[(h + 2) % 24]; if (sum > bestSum) { bestSum = sum; best = h; } }
-    const wPct = Math.round((bestSum / r.total) * 100);
-    html += `<tr><td class="hr-n" title="합계 ${fmtNum(r.total)}${r.unit}">${esc(k)}<div class="hr-s">합계 ${fmtNum(r.total)}${r.unit}</div></td>${topCell(top[0], r, true)}${topCell(top[1], r)}${topCell(top[2], r)}<td class="hr-c hr-w"><div class="hr-h">${best}~${(best + 3) % 24}시</div><div class="hr-bar"><span style="width:${wPct}%"></span></div><div class="hr-s">${wPct}%</div></td></tr>`;
+    const wPct = r.total ? Math.round((bestSum / r.total) * 100) : 0;
+    html += `<tr><td class="hr-n" title="기간 판매 ${fmtNum(r.total + r.unk)}${r.unit} = 시간 확인 ${fmtNum(r.total)}${r.unit} + 시간 모름 ${fmtNum(r.unk)}${r.unit}">${esc(k)}<div class="hr-s">합계 ${fmtNum(r.total + r.unk)}${r.unit}</div>${r.unk ? `<div class="hr-s">시간 모름 ${fmtNum(r.unk)}${r.unit}</div>` : ''}</td>${topCell(top[0], r, true)}${topCell(top[1], r)}${topCell(top[2], r)}<td class="hr-c hr-w"><div class="hr-h">${best}~${(best + 3) % 24}시</div><div class="hr-bar"><span style="width:${wPct}%"></span></div><div class="hr-s">${wPct}%</div></td></tr>`;
   });
   html += '</table>';
-  if (skipped) html += `<div class="small" style="margin-top:4px">기록이 90분 넘게 비어 시간대를 알 수 없는 감소 ${skipped}건은 뺐어요 (컴퓨터 꺼짐 등). 최근 14일 시간별 기록 기준이에요.</div>`;
-  else html += '<div class="small" style="margin-top:4px">최근 14일 시간별 기록 기준이에요.</div>';
+  html += `<div class="small" style="margin-top:4px">기간은 위 매출 계산기와 같은 근무일 기준이라 합계가 같아요 (${fmtDT(start)} ~ ${fmtDT(end)}). 퍼센트는 시간을 아는 판매 중 비중이에요.${skipped ? ` 기록이 90분 넘게 비어 언제 팔렸는지 모르는 판매는 시간 모름으로 따로 적었어요 (컴퓨터 꺼짐 등).` : ''} 시간별 기록은 최근 14일치만 남아 있어요.</div>`;
   out.innerHTML = html;
 }
 
@@ -1712,7 +1715,7 @@ function renderCalc() {
       <div>일평균 판매량<b>${n ? fmtSums(Object.fromEntries(Object.entries(qty).map(([k, v]) => [k, v / n]))) : '0'}</b></div>
     </div>`;
   if (miss) html += `<div class="calc-warn">단가 기록이 없는 판매 ${miss}건은 매출에서 빠져 있어요. 탬퍼몽키 4.5 설치 후 다음 자동조회부터 단가가 채워져요.</div>`;
-  if (!n) { out.innerHTML = html + '<div class="small" style="margin-top:8px">이 기간에는 판매 기록이 없어요.</div>'; renderHeatmap(from, to, fn); return; }
+  if (!n) { out.innerHTML = html + '<div class="small" style="margin-top:8px">이 기간에는 판매 기록이 없어요.</div>'; renderHeatmap(days, fn); return; }
   html += '<div class="calc-sec">날짜별</div><table class="calc-tbl"><tr><th>날짜</th><th>판매량</th><th>매출</th></tr>';
   rowsD.forEach(([d, q, w]) => { html += `<tr><td>${d.slice(5).replace('-', '/')} (${'일월화수목금토'[toDate(d).getDay()]})${d === currentDay ? ' 진행중' : ''}</td><td>${fmtSums(q)}</td><td>${fmtWonFull(w)}</td></tr>`; });
   html += '</table><div class="calc-sec">월별</div><table class="calc-tbl"><tr><th>월</th><th>근무일</th><th>판매량</th><th>매출</th><th>일평균</th></tr>';
@@ -1725,7 +1728,7 @@ function renderCalc() {
     html += '</table>';
   }
   out.innerHTML = html;
-  renderHeatmap(from, to, fn);
+  renderHeatmap(days, fn);
 }
 (function initCalc() {
   const sel = document.getElementById('cScope');
