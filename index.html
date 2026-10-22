@@ -193,7 +193,7 @@
         빨간 '진행중'은 아직 마감 전이라 계속 늘어나는 날이에요.<br>
         스토어 이름표와 아래 표 스토어명 앞 파란 '▲'는 재고가 한 번에 200박스(장판은 200m) 이상 늘어난 곳이에요 (입고 또는 사람이 숫자를 늘림, 판매량에는 영향 없음).<br>
         주황 '!'는 한 번에 200박스(장판은 200m) 이상 줄어서 사람이 재고를 직접 고친 것으로 의심되는 곳이에요. 합계에서 빠져 있고, 표에서 줄을 눌러 판매로 인정하면 다시 들어가요.<br>
-        노란색 칸은 10분 조회(도든 등)로 들어온 기록이에요. 정시 전체 조회 기록은 색이 없어요.<br>
+        시간별 기록의 노란색 칸은 10분 조회(도든 등)로 들어온 기록이에요. 표 맨 오른쪽 최근확인은 가장 최근에 조회한 시각이고, 그 조회에서 수량이 바뀌었을 때만 노란색이에요.<br>
         초록 금액은 그날 추정 매출이에요 (판매 수량 × 그날 상품 페이지 할인가).
       </div>
       <div class="calc">
@@ -1089,7 +1089,20 @@ function recLine(e, prev, fl, key) {
 }
 // 10분 조회 기록인지 (정시 조회는 HH:00, 10분 조회는 05분, 15분처럼 정시가 아님)
 const isFineT = (t) => !!t && !/T\d\d:00$/.test(t);
-const lastCell = (t) => (t ? `<span class="${isFineT(t) ? 'fine-t' : ''}"${isFineT(t) ? ' title="10분 조회 기록"' : ''}>${t.replace('T', ' ')}</span>` : '-');
+// 최근확인 = 가장 최근에 조회한 시각 (10분 조회 상품은 재고가 안 바뀌어 저장 안 된 조회까지 포함)
+// changed = 그 마지막 조회에서 수량이 바뀌었는지 (바뀌었을 때만 노란색)
+let finePids = new Set();
+let fineLastTs = '';
+function lastCheck(key) {
+  const rec = historyData[key] || {};
+  const ts = Object.keys(rec).sort();
+  const lastT = ts.length ? ts[ts.length - 1] : '';
+  let t = lastT;
+  if (finePids.has(String(key).split('_')[1]) && fineLastTs > t) t = fineLastTs;
+  const changed = !!t && t === lastT && ts.length >= 2 && rec[lastT] !== rec[ts[ts.length - 2]];
+  return { t, changed };
+}
+const lastCell = (lc) => (lc && lc.t ? `<span class="${lc.changed ? 'fine-t' : ''}"${lc.changed ? ' title="이 시각 조회에서 수량이 바뀌었어요"' : ''}>${lc.t.replace('T', ' ')}</span>` : '-');
 
 function slotCell(p, key) {
   if (!p) return '<span class="small">-</span>';
@@ -1177,7 +1190,9 @@ function renderRangeTable() {
       x.site = Math.min(x.site, it.site);
       x.s += r.box; x.rev += r.won; x.miss += r.miss;
       r.perDay.forEach(([d, raw, won]) => { const pd = x.perDay[d] = x.perDay[d] || { box: 0, won: 0 }; pd.box += toBox(it.key, raw); pd.won += won; if (raw > 0) x.sellDaySet.add(d); });
-      if (last) { x.k += Number(last.v) || 0; x.kAny = true; if (last.t > x.last) x.last = last.t; }
+      if (last) { x.k += Number(last.v) || 0; x.kAny = true; }
+      const lc = lastCheck(it.key);
+      if (lc.t > x.last) { x.last = lc.t; x.lcChanged = lc.changed; } else if (lc.t === x.last && lc.changed) x.lcChanged = true;
       if (pr != null) x.prices.push(pr);
     });
     rows = Object.values(g).map((x) => Object.assign(x, {
@@ -1191,7 +1206,7 @@ function renderRangeTable() {
       const last = lastRecord(it.key);
       const pr = priceAt(it.key, to);
       return { it, keys: [it.key], site: it.site, store: it.store, optionName: it.optionName || '', s: r.box, rev: r.won, miss: r.miss, t1: n ? r.box / n : 0, t2: r.sellDays,
-        price: pr == null ? -1 : pr, priceMax: pr == null ? -1 : pr, k: last ? Number(last.v) : -1, last: last ? last.t : '', rowKey: it.key,
+        price: pr == null ? -1 : pr, priceMax: pr == null ? -1 : pr, k: last ? Number(last.v) : -1, lc: lastCheck(it.key), last: lastCheck(it.key).t, rowKey: it.key,
         perDayList: r.perDay.map(([d, raw, won]) => [d, toBox(it.key, raw), won]) };
     });
   }
@@ -1226,7 +1241,7 @@ function renderRangeTable() {
       <td class="num">${fmtNum(r.t1)}${unitLabel(key)}</td>
       <td class="num">${r.t2}일</td>
       <td class="num">${r.k >= 0 ? `${r.k.toLocaleString()}개` : '-'}</td>
-      <td class="num small">${lastCell(r.last)}</td>
+      <td class="num small">${lastCell(r.lc || { t: r.last, changed: !!r.lcChanged })}</td>
     </tr>`;
     if (openKey === r.rowKey) {
       html += `<tr class="detail"><td colspan="9"><div class="detail-head"><b>${esc(r.optionName)}</b> 날짜별</div>
@@ -1293,7 +1308,7 @@ function renderTable() {
       const v = dd0[it.key] || null;
       const last = lastRecord(it.key);
       const pr = priceAt(it.key, selectedDay);
-      return { it, v, site: it.site, price: pr == null ? -1 : pr, rev: v && pr != null ? soldOf(it.key, v) * pr : -1, s: v ? soldBox(it.key, v) : -1, t1: v && v.t1 ? soldBox(it.key, v.t1) : -1, t2: v && v.t2 ? soldBox(it.key, v.t2) : -1, k: v ? v.k : -1, store: it.store, optionName: it.optionName || '', last: last ? last.t : '' };
+      return { it, v, site: it.site, price: pr == null ? -1 : pr, rev: v && pr != null ? soldOf(it.key, v) * pr : -1, s: v ? soldBox(it.key, v) : -1, t1: v && v.t1 ? soldBox(it.key, v.t1) : -1, t2: v && v.t2 ? soldBox(it.key, v.t2) : -1, k: v ? v.k : -1, store: it.store, optionName: it.optionName || '', lc: lastCheck(it.key), last: lastCheck(it.key).t };
     });
 
   rows.sort((a, b) => {
@@ -1323,7 +1338,7 @@ function renderTable() {
       <td class="num">${slotCell(r.v && r.v.t1, r.it.key)}</td>
       <td class="num">${slotCell(r.v && r.v.t2, r.it.key)}</td>
       <td class="num">${r.v ? `${Number(r.v.k).toLocaleString()}개` : '-'}</td>
-      <td class="num small">${lastCell(last && last.t)}</td>
+      <td class="num small">${lastCell(r.lc)}</td>
     </tr>`;
     if (openKey === r.it.key) {
       const all = showAllFor === r.it.key;
@@ -2032,6 +2047,7 @@ async function loadData(isRefresh) {
   Object.values(historyData).forEach((rec) => { Object.keys(rec || {}).forEach((t) => { if (t > hourTs) hourTs = t; }); });
   // 10분 조회(도든 등) 기록을 시간별 기록에 합침. 같은 시각이 겹치면 시간별 기록 우선
   let fineTs = '', fineStore = '';
+  finePids = new Set();
   if (fineText) {
     try {
       const fine = JSON.parse(fineText) || {};
@@ -2042,6 +2058,7 @@ async function loadData(isRefresh) {
       Object.keys(fine).forEach((key) => {
         if (!meta.last) Object.keys(fine[key] || {}).forEach((t) => { if (t > fineTs) fineTs = t; }); // 4.7 이하: 바뀐 기록 중 마지막
         historyData[key] = Object.assign({}, fine[key], historyData[key] || {});
+        finePids.add(String(key).split('_')[1]);
       });
       if (!fineStore) {
         const k0 = Object.keys(fine)[0];
@@ -2050,6 +2067,7 @@ async function loadData(isRefresh) {
       }
     } catch (e) { /* 무시 */ }
   }
+  fineLastTs = fineTs;
   const srcs = [latestF.source, historyF.source];
   lastSource = srcs.includes('pages') ? 'pages' : srcs.includes('raw') ? 'raw' : 'github';
   const sourceLabel = srcs.includes('pages') ? '페이지스 사본(옛날 데이터일 수 있음)' : srcs.includes('raw') ? '깃허브 원본(최대 5분 지연)' : '깃허브 원본';
