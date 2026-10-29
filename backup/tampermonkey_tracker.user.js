@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         스마트스토어 판매량 추적기
 // @namespace    competitor-stock-tracker
-// @version      4.8
+// @version      4.9
 // @description  상품페이지가 스스로 불러오는 옵션별 재고 데이터를 읽어서 옵션 단위로 판매추정을 깃허브에 자동 기록
 // @match        https://smartstore.naver.com/*/products/*
 // @match        https://brand.naver.com/*/products/*
@@ -64,27 +64,60 @@
   }
 
   if (autoMode) {
-    // 60초가 지나도 재고 데이터를 못 받으면 한 번만 새로고침해서 재시도
+    // 15초가 지나도 재고 데이터를 못 받으면 한 번만 새로고침해서 재시도, 그래도 없으면 15초 뒤 닫음 (합쳐서 최대 30초)
     setTimeout(() => {
-      if (handled) return;
+      if (handled || finished) return;
       let retried = false;
       try { retried = sessionStorage.getItem('autotrack_retry') === '1'; } catch (e) { /* 무시 */ }
       if (!retried) {
-        console.log('[판매량추적] 60초 동안 데이터 없음, 새로고침 재시도');
+        console.log('[판매량추적] 15초 동안 데이터 없음, 새로고침 재시도');
         try { sessionStorage.setItem('autotrack_retry', '1'); } catch (e) { /* 무시 */ }
         window.location.reload();
       } else {
         console.log('[판매량추적] 재시도해도 데이터 없음, 탭 닫기');
+        try { sessionStorage.removeItem('autotrack_retry'); } catch (e) { /* 무시 */ }
+        noteSmartstoreFail();
         closeAutoTab();
       }
-    }, 60000);
-    // 혹시 멈춰도 3분 뒤에는 닫기 (자동조회 탭은 깃허브에 직접 안 올리고 저장만 해서 보통 몇 초면 끝남)
-    setTimeout(() => { if (!finished) closeAutoTab(); }, 180000);
+    }, 15000);
+    // 혹시 멈춰도 30초 뒤에는 닫기 (예전 3분)
+    setTimeout(() => { if (!finished && !handled) { noteSmartstoreFail(); closeAutoTab(); } }, 30000);
   }
 
   // ---------------- 날짜 계산 ----------------
   const pad = (n) => String(n).padStart(2, '0');
   const ymd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+
+  // ---------------- 스마트스토어 연속 실패 시 30분 쉬기 ----------------
+  // 자동조회 중 스마트스토어 페이지가 10분 안에 5번 재고를 못 받으면 30분 동안 스마트스토어 자동조회 탭은 열자마자 닫음
+  // (막혀 있을 때 계속 접속해서 제한이 길어지는 걸 막으려고). brand.naver.com 링크와 10분 조회는 영향 없음
+  const isSmartstore = window.location.hostname === 'smartstore.naver.com';
+  const BLOCK_FAILS = 5, BLOCK_WINDOW_MS = 10 * 60000, BLOCK_PAUSE_MS = 30 * 60000;
+  function noteSmartstoreFail() {
+    if (!autoMode || fineMode || !isSmartstore) return;
+    try {
+      const now = Date.now();
+      const times = (GM_getValue('ss_fail_times', []) || []).filter((x) => now - x < BLOCK_WINDOW_MS);
+      times.push(now);
+      GM_setValue('ss_fail_times', times);
+      if (times.length >= BLOCK_FAILS) {
+        GM_setValue('ss_block_until', now + BLOCK_PAUSE_MS);
+        GM_setValue('ss_fail_times', []);
+        console.log('[판매량추적] 스마트스토어 연속 실패, 30분 동안 스마트스토어 자동조회 쉼');
+      }
+    } catch (e) { /* 무시 */ }
+  }
+  if (autoMode && !fineMode && isSmartstore && productNo) {
+    let until = 0;
+    try { until = GM_getValue('ss_block_until', 0) || 0; } catch (e) { /* 무시 */ }
+    if (until > Date.now()) {
+      console.log('[판매량추적] 스마트스토어 쉬는 중이라 바로 닫음');
+      try { window.stop(); } catch (e) { /* 무시 */ }
+      finished = true;
+      closeAutoTab();
+      return;
+    }
+  }
 
   function toDate(key) {
     const [d, t = '00:00'] = key.split('T');
@@ -475,6 +508,7 @@
     }
     handled = true;
     try { sessionStorage.removeItem('autotrack_retry'); } catch (e) { /* 무시 */ }
+    if (isSmartstore && autoMode && !fineMode) { try { GM_setValue('ss_fail_times', []); } catch (e) { /* 무시 */ } }
 
     if (document.readyState === 'loading') {
       await new Promise((r) => document.addEventListener('DOMContentLoaded', r));
