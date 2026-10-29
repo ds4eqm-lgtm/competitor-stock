@@ -581,6 +581,11 @@ function bizDayOf(dt) {
 }
 
 function dayWindow(day) {
+  let v = _memo.dw.get(day);
+  if (!v) { v = dayWindowRaw(day); _memo.dw.set(day, v); }
+  return v;
+}
+function dayWindowRaw(day) {
   const start = toDate(day);
   start.setHours(DAY_START_HOUR, 0, 0, 0);
   const split = new Date(start);
@@ -593,18 +598,22 @@ function dayWindow(day) {
 // 하루 판매량 계산
 // s: 판매 / u: 기록이 너무 오래 비어 언제 팔렸는지 모르는 양 / x, ev: 수동변경 의심 / k: 그날 마지막 재고
 // t1, t2: 1타임, 2타임 각각의 s, u, x, ev
-function computeDay(rec, day, flags, now, key) {
+// 기록을 시간순으로 한 번만 정리해 두고 계속 씀 (예전엔 날짜마다 매번 다시 정렬해서 느렸음)
+function sortedRecs(rec) { return Object.keys(rec).map((t) => ({ t, dt: toDate(t), v: rec[t] })).sort((a, b) => a.dt - b.dt); }
+function firstAtOrAfter(es, dt) { let lo = 0, hi = es.length; while (lo < hi) { const m = (lo + hi) >> 1; if (es[m].dt < dt) lo = m + 1; else hi = m; } return lo; }
+function computeDay(rec, day, flags, now, key, sorted) {
   flags = flags || {};
   const { start, split, end } = dayWindow(day);
-  const es = Object.keys(rec).map((t) => ({ t, dt: toDate(t), v: rec[t] })).sort((a, b) => a.dt - b.dt);
+  const es = sorted || sortedRecs(rec);
   const mk = () => ({ s: 0, u: 0, x: 0, ev: [], up: 0, upEv: [], uEv: [] });
   const all = mk();
   const t1 = mk();
   const t2 = mk();
   let k = null;
   let any = false;
-  let base = false;
-  for (let i = 0; i < es.length; i++) {
+  const i0 = firstAtOrAfter(es, start);
+  let base = i0 > 0;
+  for (let i = i0; i < es.length; i++) {
     const e = es[i];
     if (e.dt < start) { base = true; continue; }
     if (e.dt >= end || (now && e.dt > now)) break;
@@ -714,17 +723,44 @@ const KR_HOLIDAYS = [
 ];
 let extraOff = new Set();  // products.txt [휴무일]
 let extraWork = new Set(); // products.txt [근무일]
+// 날짜 계산 결과 기억해 두기 (같은 날짜를 옵션 수천 개마다 다시 계산하지 않게). 휴무일 목록을 새로 읽을 때 비움
+const _memo = { wd: new Map(), add: new Map(), pw: new Map(), nw: new Map(), wp: new Map(), dw: new Map() };
+function clearDayMemo() { Object.values(_memo).forEach((m) => m.clear()); }
 function isWorkday(day) {
+  if (_memo.wd.has(day)) return _memo.wd.get(day);
+  const r = isWorkdayRaw(day);
+  _memo.wd.set(day, r);
+  return r;
+}
+function isWorkdayRaw(day) {
   if (extraWork.has(day)) return true;
   if (extraOff.has(day) || KR_HOLIDAYS.includes(day)) return false;
   const w = toDate(day).getDay();
   return w !== 0 && w !== 6;
 }
-const addDays = (day, n) => { const d = toDate(day); d.setDate(d.getDate() + n); return ymd(d); };
-function prevWorkday(day) { let d = addDays(day, -1); for (let i = 0; i < 40 && !isWorkday(d); i++) d = addDays(d, -1); return d; }
-function nextWorkday(day) { let d = addDays(day, 1); for (let i = 0; i < 40 && !isWorkday(d); i++) d = addDays(d, 1); return d; }
+const addDays = (day, n) => {
+  const k = day + '|' + n;
+  let v = _memo.add.get(k);
+  if (v === undefined) { const d = toDate(day); d.setDate(d.getDate() + n); v = ymd(d); _memo.add.set(k, v); }
+  return v;
+};
+function prevWorkday(day) {
+  let v = _memo.pw.get(day);
+  if (v === undefined) { v = addDays(day, -1); for (let i = 0; i < 40 && !isWorkday(v); i++) v = addDays(v, -1); _memo.pw.set(day, v); }
+  return v;
+}
+function nextWorkday(day) {
+  let v = _memo.nw.get(day);
+  if (v === undefined) { v = addDays(day, 1); for (let i = 0; i < 40 && !isWorkday(v); i++) v = addDays(v, 1); _memo.nw.set(day, v); }
+  return v;
+}
 // 근무일 W 의 범위: 1타임 = 직전 근무일 17시 조회 ~ W 07시 조회, 2타임 = W 08시 조회 ~ 16시 조회 (마감 재고 = 16시 기록)
 function workPeriod(day) {
+  let v = _memo.wp.get(day);
+  if (!v) { v = workPeriodRaw(day); _memo.wp.set(day, v); }
+  return v;
+}
+function workPeriodRaw(day) {
   const start = toDate(prevWorkday(day)); start.setHours(SPLIT_HOUR, 0, 0, 0);
   const split = toDate(day); split.setHours(DAY_START_HOUR, 0, 0, 0);
   const end = toDate(day); end.setHours(SPLIT_HOUR, 0, 0, 0);
@@ -752,6 +788,12 @@ function mergeParts(parts, end) {
   return o;
 }
 
+function stockAtOrBeforeSorted(es, dt) {
+  // dt 이하인 마지막 기록
+  let lo = 0, hi = es.length;
+  while (lo < hi) { const m = (lo + hi) >> 1; if (es[m].dt <= dt) lo = m + 1; else hi = m; }
+  return lo > 0 ? es[lo - 1].v : null;
+}
 function stockAtOrBefore(rec, dt) {
   let best = null;
   Object.keys(rec).forEach((t) => { const d = toDate(t); if (d <= dt && (!best || d > best.d)) best = { d, v: rec[t] }; });
@@ -759,8 +801,11 @@ function stockAtOrBefore(rec, dt) {
 }
 
 // 날짜별 조각(08~16시 조회, 17시~다음날 07시 조회)을 계산한 다음 근무일 단위로 합침
+let esCache = {}; // { 옵션키: 시간순으로 정리한 기록 } 시간대 표에서도 다시 씀
 function buildDayData(now) {
   dayData = {};
+  esCache = {};
+  clearDayMemo();
   currentDay = workdayOf(now);
   items.forEach((it) => {
     const rec = historyData[it.key] || {};
@@ -769,13 +814,15 @@ function buildDayData(now) {
     const seg = {};
     const days = new Set(Object.keys(archive));
     const keys = Object.keys(rec).sort();
+    const es = sortedRecs(rec);
+    esCache[it.key] = es;
     const today = ymd(now);
     if (keys.length) {
       let d = addDays(bizDayOf(toDate(keys[0])), -1);
       for (let g = 0; g < 400 && d <= today; g++) { days.add(d); d = addDays(d, 1); }
     }
     days.forEach((day) => {
-      const r = computeDay(rec, day, flagsAll[it.key], now, it.key);
+      const r = computeDay(rec, day, flagsAll[it.key], now, it.key, es);
       if (r && (r.base || !archive[day] || !archive[day].t1)) seg[day] = r;
       else if (archive[day] && archive[day].t1) seg[day] = Object.assign({ archived: true }, archive[day]);
     });
@@ -798,7 +845,7 @@ function buildDayData(now) {
       const hasAny = nightParts.some(Boolean) || dayParts.some(Boolean) || !!seg[w];
       if (!hasAny) continue;
       const all = mergeParts([t1, t2]);
-      let k = stockAtOrBefore(rec, end < now ? end : now);
+      let k = stockAtOrBeforeSorted(es, end < now ? end : now);
       if (k === null) { const last = seg[w] || seg[pw]; k = last ? last.k : 0; }
       all.k = k;
       all.t1 = t1;
@@ -1610,21 +1657,21 @@ function renderHeatmap(days, fn, storeWon) {
     const rec = historyData[it.key];
     if (!rec) return;
     const fl = flagsAll[it.key] || {};
-    const ts = Object.keys(rec).sort();
+    const es = esCache[it.key] || sortedRecs(rec);
     // 같은 스토어라도 분류(데코타일, 장판)가 다르면 단위가 달라서 따로 셈. 이름은 위 스토어별 표와 같은 형식
     const label = `${it.store} (${catOf(it)})`;
     const row = rows[label] = rows[label] || { h: new Array(24).fill(0), unit: unitLabel(it.key), total: 0, unk: 0, store: it.store, cat: catOf(it) };
-    for (let i = 0; i + 1 < ts.length; i++) {
-      const a = toDate(ts[i]);
-      if (a < start || a >= end) continue;
+    for (let i = firstAtOrAfter(es, start); i + 1 < es.length; i++) {
+      const a = es[i].dt;
+      if (a >= end) break;
       const wd = a.getDay();
       if (dow === 'wd' && (wd === 0 || wd === 6)) continue;
       if (dow === 'we' && wd !== 0 && wd !== 6) continue;
-      const d = rec[ts[i]] - rec[ts[i + 1]];
+      const d = es[i].v - es[i + 1].v;
       if (d <= 0) continue;
-      if (fl[ts[i + 1]] && !approved.has(evId(it.key, ts[i + 1]))) continue;
+      if (fl[es[i + 1].t] && !approved.has(evId(it.key, es[i + 1].t))) continue;
       const q = toBox(it.key, d);
-      if ((toDate(ts[i + 1]) - a) / 60000 > 90) { skipped++; row.unk += q; continue; }
+      if ((es[i + 1].dt - a) / 60000 > 90) { skipped++; row.unk += q; continue; }
       row.h[a.getHours()] += q;
       row.total += q;
     }
