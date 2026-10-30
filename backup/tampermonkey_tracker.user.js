@@ -5,7 +5,7 @@
 // @description  상품페이지가 스스로 불러오는 옵션별 재고 데이터를 읽어서 옵션 단위로 판매추정을 깃허브에 자동 기록
 // @match        https://smartstore.naver.com/*/products/*
 // @match        https://brand.naver.com/*/products/*
-// @match        https://yongki9156.github.io/competitor-stock/*
+// @match        https://ds4eqm-lgtm.github.io/competitor-stock/*
 // @grant        GM_xmlhttpRequest
 // @grant        window.close
 // @grant        GM_setValue
@@ -21,7 +21,7 @@
 
   // ---------------- 여기 세줄만 본인 값으로 바꾸기 ----------------
   const GITHUB_TOKEN = "";
-  const GITHUB_OWNER = "yongki9156";
+  const GITHUB_OWNER = "ds4eqm-lgtm";
   const GITHUB_REPO = "competitor-stock";
   // ---------------------------------------------------------------
 

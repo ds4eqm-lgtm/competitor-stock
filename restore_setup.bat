@@ -13,7 +13,7 @@ if exist "competitor-stock\.git" (
   git pull origin main --no-rebase --no-edit
 ) else (
   echo [1/4] Downloading competitor-stock from GitHub
-  git clone https://github.com/yongki9156/competitor-stock.git
+  git clone https://github.com/ds4eqm-lgtm/competitor-stock.git
   if errorlevel 1 goto FAIL
   cd competitor-stock
 )

@@ -15,5 +15,5 @@ for /f "usebackq tokens=1" %%u in (`findstr /b /i "http" "products.txt"`) do (
 )
 rem wait for the last tabs to finish, then open the upload page
 timeout /t 30 /nobreak >nul
-start "" "chrome.exe" "https://yongki9156.github.io/competitor-stock/#flush"
+start "" "chrome.exe" "https://ds4eqm-lgtm.github.io/competitor-stock/#flush"
 exit

@@ -285,7 +285,7 @@ const DAY_START_HOUR = 7;  // 하루 시작 (07:00 ~ 다음날 07:00)
 const SPLIT_HOUR = 16;
 const SWITCH_HOUR = 17;    // 이 시각이 지나면 다음 근무일이 '진행중'
 const LONG_GAP_HOURS = 16; // 기록 사이가 이보다 길게 비면 기간불명으로 따로 표시
-const REPO_API = 'https://api.github.com/repos/yongki9156/competitor-stock/contents/';
+const REPO_API = 'https://api.github.com/repos/ds4eqm-lgtm/competitor-stock/contents/';
 
 let items = [];        // 추적중인 옵션 목록
 let itemByKey = {};    // { 옵션키: latest.json 항목 }
@@ -390,7 +390,7 @@ async function enableEditing(opts) {
   if (!t) return false;
   const token = t.trim().replace(/^["']|["']$/g, '');
   try {
-    const r = await fetch('https://api.github.com/repos/yongki9156/competitor-stock', { headers: { Authorization: `token ${token}` } });
+    const r = await fetch('https://api.github.com/repos/ds4eqm-lgtm/competitor-stock', { headers: { Authorization: `token ${token}` } });
     const j = await r.json();
     if (!r.ok || !(j.permissions && j.permissions.push)) throw new Error(r.ok ? '쓰기 권한 없음' : '상태 ' + r.status);
   } catch (e) {
@@ -416,7 +416,7 @@ function disableEditing() {
 async function checkTokenHealth(token) {
   let msg = '', bad = false;
   try {
-    const r = await fetch('https://api.github.com/repos/yongki9156/competitor-stock', { headers: { Authorization: `token ${token}` }, cache: 'no-store' });
+    const r = await fetch('https://api.github.com/repos/ds4eqm-lgtm/competitor-stock', { headers: { Authorization: `token ${token}` }, cache: 'no-store' });
     if (r.status === 401) { bad = true; msg = '깃허브 토큰이 만료됐거나 쓸 수 없는 상태예요. 자동조회 결과가 깃허브에 안 올라가요. 새 토큰을 발급해서 탬퍼몽키 스크립트 23번째 줄에 넣어주세요.'; }
     else if (r.ok) {
       const j = await r.json();
@@ -2085,7 +2085,7 @@ function downloadExcel() {
 // 1. 깃허브 API (가장 최신, 단 같은 인터넷(IP)에서 시간당 60번 제한)
 // 2. raw.githubusercontent (제한 없음, 최대 5분 늦을 수 있음)
 // 3. 깃허브 페이지스 사본 (자주 멈춰서 몇 시간씩 옛날 데이터일 수 있어 마지막 수단)
-const RAW_BASE = 'https://raw.githubusercontent.com/yongki9156/competitor-stock/main/';
+const RAW_BASE = 'https://raw.githubusercontent.com/ds4eqm-lgtm/competitor-stock/main/';
 function apiBlocked() {
   if (ghToken) return false; // 토큰이 있으면 시간당 5,000번이라 막힐 일이 거의 없음
   try { return Date.now() < Number(localStorage.getItem('ghApiBlockedUntil') || 0); } catch (e) { return false; }

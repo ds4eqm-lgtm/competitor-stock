@@ -12,5 +12,5 @@ for /f "usebackq tokens=1" %%u in (`findstr /b /i "http" "products.txt" ^| finds
   timeout /t 4 /nobreak >nul
 )
 timeout /t 15 /nobreak >nul
-start "" "chrome.exe" "https://yongki9156.github.io/competitor-stock/#flushfine"
+start "" "chrome.exe" "https://ds4eqm-lgtm.github.io/competitor-stock/#flushfine"
 exit
