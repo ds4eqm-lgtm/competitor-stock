@@ -509,13 +509,13 @@ function soldOf(key, v) {
 const CAT_UNITS = { 장판: { div: 10, label: 'm' } };
 const DEFAULT_UNIT = { div: 1, label: '박스' };
 let unitDiv = {};      // { 상품번호: {div, label} } 링크별 지정
-let unitOverride = {}; // { 상품번호: {div, label} } 대시보드에서 바꾼 단위 (data/units.json, products.txt보다 우선)
+let unitOverride = {}; // { 상품번호 또는 옵션키: {div, label} } 대시보드에서 바꾼 단위 (data/units.json, products.txt보다 우선, 옵션키가 링크보다 우선)
 let productUrl = {};   // { 상품번호: products.txt에 적힌 상품 주소 } 옵션명 누르면 이 주소로 열림
 let productOfKey = {}; // { 옵션키: 상품번호 }
 let catOfKey = {};     // { 옵션키: 분류 }
 function unitOf(key) {
   const pid = productOfKey[key];
-  return unitOverride[pid] || unitDiv[pid] || CAT_UNITS[catOfKey[key]] || DEFAULT_UNIT;
+  return unitOverride[key] || unitOverride[pid] || unitDiv[pid] || CAT_UNITS[catOfKey[key]] || DEFAULT_UNIT;
 }
 const unitK = (key) => unitOf(key).div;
 const unitLabel = (key) => unitOf(key).label;
@@ -1482,7 +1482,8 @@ function renderAll() {
 
 // ---------------- 상품별 단위 설정 (대시보드에서 바꾸기) ----------------
 function unitSource(pid, key) {
-  if (unitOverride[pid]) return '대시보드에서 설정';
+  if (unitOverride[key]) return '이 옵션만 대시보드에서 설정';
+  if (unitOverride[pid]) return '링크 전체 대시보드에서 설정';
   if (unitDiv[pid]) return 'products.txt 설정';
   if (CAT_UNITS[catOfKey[key]]) return `${catOfKey[key]} 기본값`;
   return '기본값';
@@ -1493,23 +1494,25 @@ function unitEditorHtml(it) {
   const isM = u.label === 'm';
   const n = isM ? Math.round((100 / u.div) * 100) / 100 : u.div;
   const now = isM ? `1개 = ${n}cm` : u.div > 1 ? `${u.div}장 = 1박스` : '1장 = 1박스';
-  const head = `<b>이 상품 판매 단위</b> 지금: ${now} <span class="small">(${unitSource(pid, it.key)}, 이 링크의 모든 옵션에 적용)</span>`;
-  return `<div class="unit-ed" data-pid="${esc(pid)}">${head}<br>
+  const head = `<b>판매 단위</b> 지금: ${now} <span class="small">(${unitSource(pid, it.key)})</span>`;
+  return `<div class="unit-ed" data-pid="${esc(pid)}" data-okey="${esc(it.key)}">${head}<br>
+    <select data-unit-scope><option value="opt" selected>이 옵션만</option><option value="link">이 링크 모든 옵션</option></select>
     <select data-unit-type><option value="box"${isM ? '' : ' selected'}>박스 단위</option><option value="m"${isM ? ' selected' : ''}>m 단위</option></select>
     <input type="number" data-unit-n min="0.01" step="any" value="${n}" style="width:70px">
     <span data-unit-hint>${isM ? 'cm가 1개' : '장이 1박스'}</span>
     <button data-unit-save>저장</button>
-    ${unitOverride[pid] ? '<button data-unit-reset>products.txt 기준으로 되돌리기</button>' : ''}
+    ${unitOverride[it.key] ? '<button data-unit-reset-opt>이 옵션 설정 지우기</button>' : ''}
+    ${unitOverride[pid] ? '<button data-unit-reset>링크 전체 설정 지우기</button>' : ''}
     ${canEdit ? '' : '<br><span class="small">이 컴퓨터는 처음 저장할 때 한 번만 연결 코드를 물어봐요</span>'}
   </div>`;
 }
-async function saveUnit(pid, val) {
+async function saveUnit(pid, val) { // pid 자리에 옵션키가 오면 그 옵션만
   saving = true; setModeLabel();
   try {
     const res = await ghUpdateJson('data/units.json', (obj) => {
       if (val) obj[pid] = val; else delete obj[pid];
       return obj;
-    }, `상품 ${pid} 단위 ${val ? (val.label === 'm' ? `1개=${Math.round(100 / val.div)}cm` : `${val.div}장=1박스`) : '되돌리기'}`);
+    }, `${String(pid).includes('_') ? '옵션 ' + pid : '상품 ' + pid} 단위 ${val ? (val.label === 'm' ? `1개=${Math.round(100 / val.div)}cm` : `${val.div}장=1박스`) : '되돌리기'}`);
     unitOverride = res || {};
     flagsAll = detectSuspicious(historyData); // 이상재고 기준이 단위에 따라 달라짐
     buildDayData(new Date());
@@ -1524,6 +1527,8 @@ async function saveUnit(pid, val) {
 function bindUnitEditor(root) {
   root.querySelectorAll('.unit-ed[data-pid]').forEach((box) => {
     const pid = box.dataset.pid;
+    const okey = box.dataset.okey;
+    const scope = box.querySelector('[data-unit-scope]');
     const type = box.querySelector('[data-unit-type]');
     const num = box.querySelector('[data-unit-n]');
     const hint = box.querySelector('[data-unit-hint]');
@@ -1532,13 +1537,21 @@ function bindUnitEditor(root) {
       const n = Number(num.value);
       if (!(n > 0)) { alert('0보다 큰 숫자를 넣어주세요'); return; }
       const val = type.value === 'm' ? { div: 100 / n, label: 'm' } : { div: n, label: '박스' };
-      if (!confirm(`이 상품(링크) 모든 옵션의 단위를 ${type.value === 'm' ? `1개 = ${n}cm` : `${n}장 = 1박스`}로 바꿀까요?\n지난 날짜 판매량 표시도 이 기준으로 다시 계산돼요.`)) return;
+      const one = !scope || scope.value === 'opt';
+      const what = one ? '이 옵션' : '이 링크 모든 옵션(따로 설정한 옵션은 제외)';
+      if (!confirm(`${what}의 단위를 ${type.value === 'm' ? `1개 = ${n}cm` : `${n}장 = 1박스`}로 바꿀까요?\n지난 날짜 판매량 표시도 이 기준으로 다시 계산돼요.`)) return;
       if (!canEdit && !(await enableEditing({ noRender: true }))) return;
-      saveUnit(pid, val);
+      saveUnit(one ? okey : pid, val);
+    });
+    const ro = box.querySelector('[data-unit-reset-opt]');
+    if (ro) ro.addEventListener('click', async () => {
+      if (!confirm('이 옵션만 따로 정한 단위를 지울까요? 링크 기준 단위로 돌아가요.')) return;
+      if (!canEdit && !(await enableEditing({ noRender: true }))) return;
+      saveUnit(okey, null);
     });
     const rs = box.querySelector('[data-unit-reset]');
     if (rs) rs.addEventListener('click', async () => {
-      if (!confirm('products.txt 기준 단위로 되돌릴까요?')) return;
+      if (!confirm('링크 전체에 정한 단위를 지울까요? products.txt 기준으로 돌아가요.')) return;
       if (!canEdit && !(await enableEditing({ noRender: true }))) return;
       saveUnit(pid, null);
     });
