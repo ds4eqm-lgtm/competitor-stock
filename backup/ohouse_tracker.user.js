@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         오늘의집 판매량 추적기
 // @namespace    ohouse-stock-tracker
-// @version      1.0
+// @version      1.1
 // @description  오늘의집 상품 옵션별 재고를 매시간 읽어서 판매추정을 깃허브 ohouse 폴더에 기록 (네이버용 추적기와 따로 동작)
 // @match        https://store.ohou.se/*
 // @match        https://ds4eqm-lgtm.github.io/competitor-stock/ohouse/*
@@ -63,7 +63,8 @@
 
   const DETECT = { BIG_DROP: 200, BIG_RISE: 200 };
   let unitMap = {}; // { 상품번호: 몇 개가 1박스(또는 1m)인지 } products.txt, units.json 으로 매번 새로 계산
-  const unitDivOf = (key) => Number(unitMap[String(key).split('_')[1]]) || 1;
+  let optUnitMap = {}; // { 옵션키: 몇 개가 1박스(또는 1m)인지 } 대시보드에서 옵션별로 정한 단위 (링크보다 우선)
+  const unitDivOf = (key) => Number(optUnitMap[key]) || Number(unitMap[String(key).split('_')[1]]) || 1;
   const isBig = (key, n, lim) => n / unitDivOf(key) >= lim;
 
   function computeDay(rec, day, flags, now, key) {
@@ -407,6 +408,8 @@
       const list = parseProducts(ptext, override);
       unitMap = {};
       list.forEach((p) => { unitMap[p.pid] = p.div; });
+      optUnitMap = {};
+      Object.keys(override).forEach((k) => { if (k.includes('_') && Number(override[k] && override[k].div) > 0) optUnitMap[k] = Number(override[k].div); });
       if (!list.length) throw new Error('ohouse/products.txt 에 상품 링크가 없어요');
 
       const now = new Date();
