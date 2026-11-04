@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         오늘의집 판매량 추적기
 // @namespace    ohouse-stock-tracker
-// @version      1.1
+// @version      1.2
 // @description  오늘의집 상품 옵션별 재고를 매시간 읽어서 판매추정을 깃허브 ohouse 폴더에 기록 (네이버용 추적기와 따로 동작)
 // @match        https://store.ohou.se/*
 // @match        https://ds4eqm-lgtm.github.io/competitor-stock/ohouse/*
@@ -31,6 +31,7 @@
   const LONG_GAP_HOURS = 16;
   const HISTORY_KEEP_DAYS = 14;
   const REQ_GAP_MS = 1500;   // 상품 하나 읽고 다음 상품까지 쉬는 시간 (+0~1초 랜덤)
+  const FINE_STORES = ['도든']; // 10분 조회할 브랜드 (오늘의집 브랜드명 그대로, 여러 개면 ['도든', '룸스토어'])
 
   const isDashboard = window.location.hostname === `${GITHUB_OWNER}.github.io`;
   const isStore = window.location.hostname === 'store.ohou.se';
@@ -472,16 +473,93 @@
     }
   }
 
+  // ---------------- 10분 조회 (store.ohou.se/#ohcollect-fine 탭) ----------------
+  // FINE_STORES 브랜드 링크만 읽어서 재고가 바뀐 때만 ohouse/data/history_fine.json 에 기록 (네이버 10분 조회와 같은 방식)
+  // 어떤 링크가 도든인지는 매시 조회 결과(latest.json)의 브랜드명으로 찾음 → 새 도든 링크는 다음 매시 조회 뒤부터 10분 조회에 들어감
+  async function runFine() {
+    if (document.readyState === 'loading') await new Promise((r) => document.addEventListener('DOMContentLoaded', r));
+    const box = document.createElement('div');
+    box.style.cssText = 'position:fixed;top:12px;right:12px;z-index:2147483647;background:#1e3a8a;color:#fff;padding:12px 16px;border-radius:8px;font:14px sans-serif;max-width:420px;line-height:1.5;white-space:pre-line;';
+    document.body.appendChild(box);
+    const say = (t) => { box.textContent = '[오늘의집 10분] ' + t; console.log('[오늘의집 10분] ' + t); };
+    const closeLater = (ms) => setTimeout(() => window.close(), ms);
+    const lock = GM_getValue('oh_fine_lock', 0) || 0;
+    if (lock > Date.now()) { say('이미 다른 탭에서 조회 중이라 닫아요'); closeLater(3000); return; }
+    GM_setValue('oh_fine_lock', Date.now() + 5 * 60000);
+    try {
+      if (!GITHUB_TOKEN) throw new Error('스크립트 23번째 줄에 깃허브 토큰이 비어 있어요');
+      say('대상 링크 찾는 중...');
+      const [ptext, latestF] = await Promise.all([getText(`${DIR}products.txt`), getJsonFile(`${DIR}data/latest.json`)]);
+      const active = new Set(parseProducts(ptext, {}).map((p) => p.pid));
+      const pids = [];
+      Object.values(latestF.content || {}).forEach((it) => {
+        const pid = String(it.product);
+        if (FINE_STORES.includes(String(it.store).trim()) && active.has(pid) && !pids.includes(pid)) pids.push(pid);
+      });
+      const now = new Date();
+      const today = ymd(now);
+      const nowKey = `${today}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+      let fail = 0;
+      for (let i = 0; i < pids.length; i++) {
+        say(`재고 읽는 중 ${i + 1}/${pids.length}`);
+        let data = null;
+        for (let tr = 0; tr < 2 && !data; tr++) {
+          try { data = await fetchOptions(pids[i]); } catch (e) { if (tr === 0) await sleep(3000); }
+        }
+        if (!data) fail++;
+        else {
+          const r = toEntry(pids[i], data, nowKey, today);
+          if (r.entry.options.length) GM_setValue(`ohf_${pids[i]}_${nowKey}`, r.entry);
+        }
+        if (i < pids.length - 1) await sleep(REQ_GAP_MS + Math.random() * 1000);
+      }
+      const keys = GM_listValues().filter((k) => k.startsWith('ohf_'));
+      const entries = keys.map((k) => GM_getValue(k)).filter(Boolean).sort((a, b) => (a.nowKey < b.nowKey ? -1 : a.nowKey > b.nowKey ? 1 : 0));
+      if (!entries.length) {
+        say(pids.length ? '올릴 결과 없음' : `${FINE_STORES.join(', ')} 링크가 아직 없음 (매시 조회가 한 번 돈 뒤부터 잡혀요)`);
+      } else {
+        const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - HISTORY_KEEP_DAYS);
+        const cutoffStr = ymd(cutoff);
+        say(`${entries.length}개 결과 올리는 중...`);
+        await updateJsonFile(`${DIR}data/history_fine.json`, (fine) => {
+          entries.forEach((en) => en.options.forEach((opt) => {
+            const key = `${en.channelId}_${en.productNo}_${opt.id}`;
+            const rec = fine[key] || {};
+            const ts = Object.keys(rec).sort();
+            const prev = ts.length ? rec[ts[ts.length - 1]] : null;
+            if (prev !== opt.stock) rec[en.nowKey] = opt.stock; // 바뀐 때만 기록
+            Object.keys(rec).forEach((t) => { if (t < cutoffStr) delete rec[t]; });
+            fine[key] = rec;
+          }));
+          // 마지막으로 10분 조회한 시각 (재고가 안 바뀌어도 대시보드에 최근 확인 시각을 보여주려고)
+          fine._meta = { last: entries[entries.length - 1].nowKey, store: FINE_STORES.join(', ') };
+          return fine;
+        }, `오늘의집 10분 조회 ${FINE_STORES.join(', ')} ${entries[entries.length - 1].nowKey}`);
+        keys.forEach((k) => GM_deleteValue(k));
+        say(`${pids.length}개 링크 업로드 완료${fail ? `\n못 읽은 링크 ${fail}개` : ''}`);
+      }
+      GM_setValue('oh_fine_lock', 0);
+      closeLater(fail ? 30000 : 4000);
+    } catch (e) {
+      box.style.background = '#b91c1c';
+      say(`오류: ${(e && e.message) || e}\n결과는 보관했다가 다음 10분 조회 때 같이 올려요.`);
+      GM_setValue('oh_fine_lock', 0);
+      closeLater(120000);
+    }
+  }
+
   if (isStore) {
-    // bat 이 store.ohou.se/#ohcollect 로 연 탭에서만 동작. 직접 둘러보는 오늘의집 탭에서는 아무것도 안 함
-    let collect = false;
+    // bat 이 store.ohou.se/#ohcollect(매시) 또는 #ohcollect-fine(10분) 으로 연 탭에서만 동작. 직접 둘러보는 오늘의집 탭에서는 아무것도 안 함
+    let mode = '';
     try {
       if (window.location.hash === '#ohcollect') sessionStorage.setItem('ohcollect', '1');
-      collect = sessionStorage.getItem('ohcollect') === '1'; // 탭이 닫히면 자동으로 지워짐
+      if (window.location.hash === '#ohcollect-fine') sessionStorage.setItem('ohcollect', 'fine');
+      mode = sessionStorage.getItem('ohcollect') || ''; // 탭이 닫히면 자동으로 지워짐
     } catch (e) {
-      collect = window.location.hash === '#ohcollect';
+      mode = window.location.hash === '#ohcollect' ? '1' : window.location.hash === '#ohcollect-fine' ? 'fine' : '';
     }
-    if (collect) runCollect();
+    if (mode === '1') runCollect();
+    else if (mode === 'fine') runFine();
     return;
   }
 

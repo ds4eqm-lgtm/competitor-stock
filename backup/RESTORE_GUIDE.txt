@@ -39,3 +39,4 @@
 탬퍼몽키 스크립트 backup\ohouse_tracker.user.js (토큰 23번째 줄, 네이버용과 같은 토큰)
 매시 03분 자동조회 등록 ohouse_register.bat, 해제 ohouse_stop.bat
 상품 목록 고친 뒤 올리기 ohouse_products_upload.bat
+오늘의집 도든 10분 조회 등록 ohouse_fine_register.bat (매시 08,18,28,38,48,58분, 0~6시 쉼), 해제 ohouse_fine_stop.bat
