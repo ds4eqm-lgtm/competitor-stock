@@ -316,6 +316,7 @@ let sourceText = '';
 let bridgeOk = false;
 let lastSource = '';
 let ghToken = '';
+let bridgeToken = ''; // 이 컴퓨터 탬퍼몽키가 넘겨준 토큰 (항상 최신, 브라우저 저장값보다 우선)
 try { ghToken = localStorage.getItem('ghToken') || ''; } catch (e) { /* 무시 */ }
 const editMode = () => (bridgeOk ? 'bridge' : ghToken ? 'token' : null);
 function refreshCanEdit() { canEdit = !!editMode(); setModeLabel(); }
@@ -351,7 +352,14 @@ async function ghUpdateJson(path, mutate, message) {
       const j = await g.json();
       sha = j.sha;
       content = JSON.parse(b64ToUtf8(j.content || '') || '{}');
-    } else if (g.status === 401 || g.status === 403) {
+    } else if (g.status === 401) {
+      // 저장해 둔 토큰이 만료됨: 탬퍼몽키 토큰이 있으면 그걸로 다시, 없으면 지우고 새로 물어보게 함
+      if (bridgeToken && ghToken !== bridgeToken) { ghToken = bridgeToken; continue; }
+      try { if (localStorage.getItem('ghToken') === ghToken) localStorage.removeItem('ghToken'); } catch (e) { /* 무시 */ }
+      ghToken = '';
+      refreshCanEdit();
+      throw new Error('이 컴퓨터에 저장된 연결 코드가 만료돼서 지웠어요. 확인 누르고 저장을 다시 누르면 새 연결 코드를 물어봐요.\n(관리용 컴퓨터 대시보드 위쪽 다른 컴퓨터 연결 코드 복사로 받을 수 있어요)');
+    } else if (g.status === 403) {
       throw new Error('토큰 권한 오류 (' + g.status + '). 편집 켜기를 다시 해주세요.');
     } else if (g.status !== 404) {
       last = 'GET ' + g.status;
@@ -477,10 +485,12 @@ window.addEventListener('message', (ev) => {
     bridgeOk = true;
     // 관리용 컴퓨터는 탬퍼몽키의 토큰으로 읽기도 해서 항상 최신 데이터를 봄 (메모리에만 두고 저장 안 함)
     if (m.token) checkTokenHealth(m.token);
-    if (!ghToken && m.token) {
+    if (m.token && m.token !== ghToken) {
+      // 예전에 '편집 켜기'로 저장해 둔 토큰이 만료돼 있어도 탬퍼몽키 토큰을 먼저 씀
+      bridgeToken = m.token;
       ghToken = m.token;
       if (lastSource !== 'github') loadData(true).catch(() => {});
-    }
+    } else if (m.token) bridgeToken = m.token;
     refreshCanEdit();
     // 예전 버전에서 이 브라우저에만 저장해 둔 인정 내역이 있으면 깃허브로 옮김
     try {
