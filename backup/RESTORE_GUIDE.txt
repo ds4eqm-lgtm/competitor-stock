@@ -32,3 +32,10 @@
 [평소에 해둘 것]
 수정이 끝나고 며칠 정상으로 돌아가면 Claude한테 복원 지점 갱신해달라고 하기
 탬퍼몽키 스크립트를 고치면 Claude한테 백업 파일도 갱신해달라고 하기
+
+[오늘의집 추적 (2026-11-04 추가)]
+대시보드 https://ds4eqm-lgtm.github.io/competitor-stock/ohouse/
+상품 목록 ohouse\products.txt, 데이터 ohouse\data 폴더 (네이버 데이터와 따로)
+탬퍼몽키 스크립트 backup\ohouse_tracker.user.js (토큰 23번째 줄, 네이버용과 같은 토큰)
+매시 03분 자동조회 등록 ohouse_register.bat, 해제 ohouse_stop.bat
+상품 목록 고친 뒤 올리기 ohouse_products_upload.bat
