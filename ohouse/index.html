@@ -520,6 +520,7 @@ const CAT_UNITS = { 장판: { div: 10, label: 'm' } };
 const DEFAULT_UNIT = { div: 1, label: '박스' };
 let unitDiv = {};      // { 상품번호: {div, label} } 링크별 지정
 let unitOverride = {}; // { 상품번호 또는 옵션키: {div, label} } 대시보드에서 바꾼 단위 (data/units.json, products.txt보다 우선, 옵션키가 링크보다 우선)
+let storeAlias = {};   // { 상품번호: 대시보드에 보여줄 스토어명 } products.txt 링크 줄 끝 '스토어=이름' (예: LX하우시스 링크를 룸스토어로 합치기)
 let productUrl = {};   // { 상품번호: products.txt에 적힌 상품 주소 } 옵션명 누르면 이 주소로 열림
 let productOfKey = {}; // { 옵션키: 상품번호 }
 let catOfKey = {};     // { 옵션키: 분류 }
@@ -2149,6 +2150,7 @@ async function loadActiveProducts() {
     const cat = {};
     const units = {};
     const urls = {};
+    const alias = {};
     const offs = new Set();
     const works = new Set();
     const order = [];
@@ -2173,9 +2175,12 @@ async function loadActiveProducts() {
       if (/^https?:\/\//i.test(u) && !(m[1] in urls)) urls[m[1]] = u;
       // 링크 뒤 단위 표시: '9장' → 박스 환산, '20cm' / '1m' → m 환산
       const tail = l.slice(l.indexOf(m[0]) + m[0].length);
-      const uj = tail.match(/(\d+)\s*장/);
-      const ucm = tail.match(/(\d+(?:\.\d+)?)\s*cm/i);
-      const um = tail.match(/(\d+(?:\.\d+)?)\s*m(?![a-z])/i);
+      const sa = tail.match(/스토어\s*=\s*(.+)$/);
+      if (sa && sa[1].trim()) alias[m[1]] = sa[1].trim();
+      const ut = sa ? tail.slice(0, sa.index) : tail; // 스토어 이름 안의 숫자는 단위로 안 봄
+      const uj = ut.match(/(\d+)\s*장/);
+      const ucm = ut.match(/(\d+(?:\.\d+)?)\s*cm/i);
+      const um = ut.match(/(\d+(?:\.\d+)?)\s*m(?![a-z])/i);
       if (uj && Number(uj[1]) > 1) units[m[1]] = { div: Number(uj[1]), label: '박스' };
       else if (ucm && Number(ucm[1]) > 0) units[m[1]] = { div: 100 / Number(ucm[1]), label: 'm' };
       else if (um && !ucm && Number(um[1]) > 0) units[m[1]] = { div: 1 / Number(um[1]), label: 'm' };
@@ -2188,6 +2193,7 @@ async function loadActiveProducts() {
     prodCat = cat;
     unitDiv = units;
     productUrl = urls;
+    storeAlias = alias;
     extraOff = offs;
     extraWork = works;
     return nums.length ? nums : null;
@@ -2258,6 +2264,8 @@ async function loadData(isRefresh) {
   const sourceLabel = srcs.includes('pages') ? '페이지스 사본(옛날 데이터일 수 있음)' : srcs.includes('raw') ? '깃허브 원본(최대 5분 지연)' : '깃허브 원본';
 
   items = Object.entries(latest).map(([key, it]) => Object.assign({ key }, it));
+  // products.txt 에서 '스토어=이름' 으로 정한 링크는 그 스토어로 합쳐서 보여줌 (원본 데이터는 그대로)
+  items.forEach((it) => { const a = storeAlias[String(it.product)]; if (a) { it.origStore = it.store; it.store = a; } });
   // 옵션이 없는 상품은 옵션명이 '기본'으로 들어오므로 상품명으로 바꿔서 보여줌
   items.forEach((it) => {
     if (!it.optionName || ['기본', '기본옵션', 'default'].includes(String(it.optionName).trim())) {
