@@ -156,6 +156,13 @@
   .rg-days td, .rg-days th { padding:3px 8px; border-bottom:1px solid #eee; text-align:right; }
   .rg-days td:first-child, .rg-days th:first-child { text-align:left; }
   .recs .r.fine { background:#fef08a; border-radius:4px; }
+  .cal-day .promo { position:absolute; left:4px; bottom:3px; font-size:10px; font-weight:800; color:#fff; background:#7c3aed; border-radius:3px; padding:0 3px; line-height:14px; }
+  .promo-sub { display:block; font-size:11px; color:#7c3aed; font-weight:700; white-space:nowrap; }
+  .promo-box { border:1px solid #c4b5fd; background:#f5f3ff; border-radius:8px; padding:8px 10px; margin-bottom:10px; font-size:13px; }
+  .promo-box .pt { font-weight:800; color:#5b21b6; margin-bottom:4px; }
+  .promo-box .pr { display:flex; flex-wrap:wrap; gap:4px 12px; padding:4px 0; border-top:1px dashed #ddd6fe; }
+  .promo-box .pr:first-of-type { border-top:none; }
+  .promo-box .pr b { color:#5b21b6; }
   .fine-t { background:#fef08a; border-radius:4px; padding:1px 4px; }
   .unit-ed { font-size:12px; color:#444; background:#f8fafc; border:1px solid #e5e7eb; border-radius:8px; padding:8px 10px; margin-bottom:8px; line-height:1.9; }
   .unit-ed select, .unit-ed input, .unit-ed button { font-size:12px; padding:3px 6px; border:1px solid #ccc; border-radius:6px; background:#fff; }
@@ -216,6 +223,7 @@
         스토어 이름표와 아래 표 스토어명 앞 파란 '▲'는 재고가 한 번에 200박스(장판은 200m) 이상 늘어난 곳이에요 (입고 또는 사람이 숫자를 늘림, 판매량에는 영향 없음).<br>
         주황 '!'는 한 번에 200박스(장판은 200m) 이상 줄어서 사람이 재고를 직접 고친 것으로 의심되는 곳이에요. 합계에서 빠져 있고, 표에서 줄을 눌러 판매로 인정하면 다시 들어가요.<br>
         표 맨 오른쪽 최근확인은 가장 최근에 조회한 시각이에요. 재고가 -1(무제한)로 설정된 옵션은 판매량을 알 수 없어서 목록에 안 나와요.<br>
+        보라 '할인'은 그날 쿠폰이 걸려 있었거나 판매가를 내린 상품이 있는 날이에요 (위에서 고른 스토어 기준). 날짜를 누르면 표 위에 할인율, 할인가, 기간이 나와요.<br>
         초록 금액은 그날 추정 매출이에요 (판매 수량 × 그날 오늘의집 옵션 판매가, 쿠폰 할인 전).
       </div>
       <div class="calc">
@@ -257,6 +265,7 @@
         </span>
       </div>
       <div class="count" id="count"></div>
+      <div id="promoBox"></div>
       <div id="rgTotal"></div>
       <table>
         <thead>
@@ -1068,7 +1077,7 @@ function renderCalendar() {
     const style = alpha ? `style="background:rgba(59,130,246,${alpha.toFixed(2)})"` : '';
     html += `<div class="${cls.join(' ')}" data-day="${day}" ${style}>
       <span class="n">${d}</span>${day === currentDay ? '<span class="live">진행중</span>' : ''}
-      ${has ? calCellNums(day) : ''}${has ? calRevHtml(day) : ''}
+      ${has ? calCellNums(day) : ''}${has ? calRevHtml(day) : ''}${has && dayHasPromo(day) ? '<span class="promo" title="이 날 할인(쿠폰 또는 판매가 인하) 중인 상품이 있어요">할인</span>' : ''}
     </div>`;
   }
   const cal = document.getElementById('cal');
@@ -1488,6 +1497,7 @@ function renderAll() {
   renderLegend();
   renderCalendar();
   renderTable();
+  renderPromoBox();
   renderCalc();
 }
 
@@ -1588,9 +1598,109 @@ function priceCell(key, price) {
   if (price < 0) return '<span class="small">-</span>';
   const div = unitK(key);
   const sub = div !== 1 ? `<span class="price-sub">1${unitLabel(key)} ${fmtWonFull(price * div)}</span>` : '';
-  return `${fmtWonFull(price)}${sub}`;
+  return `${fmtWonFull(price)}${sub}${rangeOn ? '' : promoLine(key, selectedDay)}`;
 }
 const fmtWonFull = (n) => `${Math.round(n).toLocaleString()}원`;
+
+// ---------------- 프로모션 (오늘의집) ----------------
+// 탬퍼몽키 1.3부터 옵션마다 가격 상태가 바뀐 시각만 기록: pm { 시간키: [정가, 판매가, 쿠폰할인액] }
+// 할인으로 보는 경우: 상품 쿠폰이 걸려 있음, 또는 판매가가 지금까지 본 가장 높은 판매가보다 낮음(가격 인하)
+const promoCache = {};
+function promoStates(key) {
+  if (promoCache[key]) return promoCache[key];
+  const it = itemByKey[key];
+  const pm = (it && it.pm) || {};
+  const list = Object.keys(pm).sort().map((t) => ({ t, dt: toDate(t), r: Number(pm[t][0]) || 0, s: Number(pm[t][1]) || 0, c: Number(pm[t][2]) || 0 }));
+  const base = list.reduce((m, x) => Math.max(m, x.s), 0);
+  return (promoCache[key] = { list, base });
+}
+function promoInfo(key, day) {
+  const { list, base } = promoStates(key);
+  if (!list.length) return null;
+  const { start, end } = workPeriod(day);
+  let st = null;
+  const act = [];
+  for (const x of list) {
+    if (x.dt <= start) st = x;
+    else if (x.dt <= end) act.push(x);
+    else break;
+  }
+  if (st) act.unshift(st);
+  if (!act.length) return null;
+  // 그 근무일 중 가장 싸게 팔던 상태
+  const best = act.reduce((a, x) => ((x.s - x.c) < (a.s - a.c) ? x : a), act[act.length - 1]);
+  const cut = best.s > 0 && base > 0 && best.s < base;
+  const coupon = best.c > 0;
+  const fin = best.s - best.c;
+  return {
+    r: best.r, s: best.s, c: best.c, fin, base, cut, coupon, promo: cut || coupon,
+    siteRate: best.r > best.s ? Math.round(((best.r - best.s) / best.r) * 100) : 0,
+    finRate: best.r > fin ? Math.round(((best.r - fin) / best.r) * 100) : 0,
+    cRate: best.s > 0 ? Math.round((best.c / best.s) * 100) : 0,
+    cutRate: cut ? Math.round(((base - best.s) / base) * 100) : 0,
+  };
+}
+// 선택한 날을 포함해서 할인이 이어진 근무일 범위
+function promoRun(key, day) {
+  const first = promoStates(key).list[0];
+  const firstDay = first ? ymd(first.dt) : day;
+  let a = day;
+  for (let i = 0; i < 120; i++) { const p = prevWorkday(a); if (p < firstDay || !(promoInfo(key, p) || {}).promo) break; a = p; }
+  let b = day;
+  for (let i = 0; i < 120 && b < currentDay; i++) { const n = nextWorkday(b); if (n > currentDay || !(promoInfo(key, n) || {}).promo) break; b = n; }
+  return { from: a, to: b, fromStart: a <= firstDay, live: b >= currentDay };
+}
+const md = (d) => `${Number(d.slice(5, 7))}/${Number(d.slice(8))}`;
+function promoLine(key, day) {
+  const p = promoInfo(key, day);
+  if (!p || !p.promo) return '';
+  const parts = [];
+  if (p.cut) parts.push(`인하 ${p.cutRate}%`);
+  if (p.coupon) parts.push(`쿠폰가 ${fmtWonFull(p.fin)}`);
+  return `<span class="promo-sub" title="정가 ${fmtWonFull(p.r)} · 판매가 ${fmtWonFull(p.s)}${p.coupon ? ` · 상품쿠폰 ${fmtWonFull(p.c)}` : ''} · 정가 대비 ${p.finRate}%">${parts.join(' · ')}</span>`;
+}
+function dayHasPromo(day) {
+  return items.some((it) => matchFilter(it) && (promoInfo(it.key, day) || {}).promo);
+}
+// 표 위 프로모션 요약: 상품(링크)별로 묶어서 보여줌
+function renderPromoBox() {
+  const box = document.getElementById('promoBox');
+  if (!box) return;
+  if (rangeOn) { box.innerHTML = ''; return; }
+  const day = selectedDay;
+  const groups = {};
+  items.filter(matchFilter).forEach((it) => {
+    const p = promoInfo(it.key, day);
+    if (!p || !p.promo) return;
+    const g = groups[it.product] = groups[it.product] || { it, ps: [], runs: [] };
+    g.ps.push(p);
+    g.runs.push(promoRun(it.key, day));
+  });
+  const gs = Object.values(groups);
+  if (!gs.length) { box.innerHTML = ''; return; }
+  const rng = (arr, f) => { const a = Math.min(...arr), b = Math.max(...arr); return a === b ? f(a) : `${f(a)}~${f(b)}`; };
+  const pct = (n) => `${n}%`;
+  const won = (n) => fmtWonFull(n);
+  const rows = gs.map((g) => {
+    const ps = g.ps;
+    const from = g.runs.reduce((m, r) => (r.from < m ? r.from : m), g.runs[0].from);
+    const to = g.runs.reduce((m, r) => (r.to > m ? r.to : m), g.runs[0].to);
+    const fromStart = g.runs.some((r) => r.fromStart && r.from === from);
+    const live = g.runs.some((r) => r.live);
+    const kinds = [];
+    if (ps.some((p) => p.coupon)) kinds.push(`상품쿠폰 ${rng(ps.filter((p) => p.coupon).map((p) => p.cRate), pct)}`);
+    if (ps.some((p) => p.cut)) kinds.push(`판매가 인하 ${rng(ps.filter((p) => p.cut).map((p) => p.cutRate), pct)}`);
+    const total = items.filter((x) => x.product === g.it.product).length;
+    return `<div class="pr"><span><b>${esc(g.it.store)}</b> ${esc(g.it.productName || '')}</span>
+      <span>옵션 ${ps.length}/${total}개</span>
+      <span>${kinds.join(' · ')}</span>
+      <span>판매가 ${rng(ps.map((p) => p.s), won)} → 할인 적용가 <b>${rng(ps.map((p) => p.fin), won)}</b></span>
+      <span>정가 대비 ${rng(ps.map((p) => p.finRate), pct)}</span>
+      <span>기간 ${fromStart ? `${md(from)}(기록 시작) 이전부터` : md(from)} ~ ${live ? '진행중' : md(to)}</span></div>`;
+  }).join('');
+  box.innerHTML = `<div class="promo-box"><div class="pt">이 날 할인 중인 상품 ${gs.length}개</div>${rows}
+    <div class="small" style="white-space:normal;margin-top:4px">할인 적용가 = 판매가 − 상품쿠폰. 판매가 인하는 지금까지 기록된 가장 높은 판매가 대비예요. 정가 대비는 오늘의집 화면에 나오는 정가 기준 할인율이에요.</div></div>`;
+}
 function fmtWonShort(n) {
   if (n >= 100000000) return `${(n / 100000000).toFixed(2).replace(/\.?0+$/, '')}억`;
   if (n >= 10000) return `${Math.round(n / 10000).toLocaleString()}만`;
@@ -2281,6 +2391,7 @@ async function loadData(isRefresh) {
   flagsAll = detectSuspicious(historyData);
   sendUnitsToTracker();
   Object.keys(sheetKeyCache).forEach((k) => delete sheetKeyCache[k]);
+  Object.keys(promoCache).forEach((k) => delete promoCache[k]);
   // 사이트 옵션 순서: products.txt 상품 순서 → 상품 안에서는 옵션이 처음 기록된 순서(사이트 순서)
   const optIdx = {};
   items.forEach((it, i) => { optIdx[it.key] = i; });

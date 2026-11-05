@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         오늘의집 판매량 추적기
 // @namespace    ohouse-stock-tracker
-// @version      1.2
+// @version      1.3
 // @description  오늘의집 상품 옵션별 재고를 매시간 읽어서 판매추정을 깃허브 ohouse 폴더에 기록 (네이버용 추적기와 따로 동작)
 // @match        https://store.ohou.se/*
 // @match        https://ds4eqm-lgtm.github.io/competitor-stock/ohouse/*
@@ -273,6 +273,12 @@
         Object.entries(dailyMap[key] || {}).forEach(([day, r]) => {
           if (r.base || !daily[day] || !daily[day].t1) daily[day] = compactDay(r);
         });
+        // 가격 상태(정가, 판매가, 쿠폰)가 바뀐 시각만 기록 → 대시보드가 할인 기간을 그림
+        const pm = Object.assign({}, old.pm || {});
+        if (Array.isArray(opt.pr)) {
+          const lk = Object.keys(pm).sort().pop();
+          if (!lk || JSON.stringify(pm[lk]) !== JSON.stringify(opt.pr)) pm[en.nowKey] = opt.pr;
+        }
         latest[key] = {
           store: en.storeName,
           product: en.productNo,
@@ -282,6 +288,7 @@
           stock: opt.stock,
           price: np > 0 ? np : old.price,
           prices,
+          pm,
           daily,
         };
       }));
@@ -368,7 +375,11 @@
       if (st < 0) { unlimited++; return; }
       const name = [o.explain, o.explain2].filter((x) => x && String(x).trim()).join(' / ') || String(o.id);
       const price = Number((o.price && (o.price.sellingPrice || o.price.salePrice)) || o.sellingCost) || null;
-      options.push({ id: String(o.id), name, stock: st, price });
+      // 프로모션 확인용 [정가, 판매가, 상품쿠폰 할인액]
+      const plans = (o.price && Array.isArray(o.price.discountPlans)) ? o.price.discountPlans : [];
+      const coupon = plans.reduce((n, d) => n + (Number(d && d.discountAmount) || 0), 0);
+      const pr = [Number(o.price && o.price.regularPrice) || 0, price || 0, coupon];
+      options.push({ id: String(o.id), name, stock: st, price, pr });
     });
     const brand = pr.brand || {};
     return {
