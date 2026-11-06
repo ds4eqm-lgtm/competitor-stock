@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         오늘의집 판매량 추적기
 // @namespace    ohouse-stock-tracker
-// @version      1.4
+// @version      1.5
 // @description  오늘의집 상품 옵션별 재고를 매시간 읽어서 판매추정을 깃허브 ohouse 폴더에 기록 (네이버용 추적기와 따로 동작)
 // @match        https://store.ohou.se/*
 // @match        https://ds4eqm-lgtm.github.io/competitor-stock/ohouse/*
@@ -315,56 +315,72 @@
         if (!m.r && opt.price > 0 && amt > 0) m.r = Math.round((amt / opt.price) * 100);
       })));
       Object.entries(couponInfo || {}).forEach(([id, c]) => {
-        const m = pr.coupons[id];
-        if (!m) return;
-        Object.assign(m, c);
+        const m = pr.coupons[id] || (pr.coupons[id] = { first: stamp, stores: {}, pids: {} });
+        if (!m.last || stamp > m.last) m.last = stamp;
+        Object.assign(m.stores, c.stores || {});
+        Object.assign(m.pids, c.pids || {});
+        // 종료일이 늦춰지면 연장 기록
+        if (m.end && c.end && c.end > m.end) (m.ext = m.ext || []).push({ at: stamp, from: m.end, to: c.end });
+        const { pids: _p, stores: _s, ...rest } = c;
+        Object.assign(m, rest);
       });
       pr._meta = { last: stamp };
       return pr;
     }, `오늘의집 쿠폰 기록 ${stamp}`);
   }
 
-  // 쿠폰 이름, 종료일 읽기 (오늘의집 로그인 필요, 쿠폰을 받지는 않음)
-  // 처음 보는 쿠폰이거나 오늘 아직 확인 안 한 쿠폰만, 쿠폰마다 상품 하나로 한 번만 물어봄
+  // 쿠폰 전부 읽기 (오늘의집 로그인 필요)
+  // 오늘의집은 받은 쿠폰만 이름, 종료일이 보여서, 받을 수 있는 쿠폰이 있으면 '쿠폰 받기'를 대신 눌러서 받은 다음 목록을 읽음 (무료, 결제 없음)
   const toKst = (iso) => { const d = new Date(iso); if (isNaN(d)) return null; return `${ymd(d)}T${pad(d.getHours())}:${pad(d.getMinutes())}`; };
-  async function readCouponInfo(entries, today) {
+  async function readCouponInfo(entries, say) {
     const info = {};
-    let known = {};
-    try { known = ((await getJsonFile(`${DIR}data/promos.json`)).content || {}).coupons || {}; } catch (e) { known = {}; }
-    const need = {}; // { 쿠폰번호: 상품번호 }
-    entries.forEach((en) => en.options.forEach((opt) => (opt.plans || []).forEach(([id]) => {
-      const k = known[id];
-      if ((!k || k.chk !== today) && !need[id]) need[id] = en.productNo;
-    })));
-    const pids = [...new Set(Object.values(need))];
-    let login = true;
-    for (const pid of pids) {
-      if (!Object.keys(need).some((id) => need[id] === pid && !info[id])) continue;
+    const nowIso = new Date().toISOString();
+    const prods = [];
+    const seen = new Set();
+    entries.forEach((en) => { if (!seen.has(en.productNo)) { seen.add(en.productNo); prods.push({ pid: en.productNo, store: en.storeName, price: (en.options[0] && en.options[0].price) || 0 }); } });
+    let login = true, got = 0;
+    for (let i = 0; i < prods.length; i++) {
+      const p = prods[i];
+      if (say) say(`쿠폰 확인 중 ${i + 1}/${prods.length}`);
       try {
-        const r = await fetch(`${window.location.origin}/api/goods/${pid}/coupons`, { credentials: 'include', cache: 'no-store', headers: { Accept: 'application/json' } });
+        const base = window.location.origin;
+        const ap = await fetch(`${base}/api/goods/${p.pid}/applicable-coupons`, { credentials: 'include', cache: 'no-store' });
+        if (ap.ok) {
+          const aj = await ap.json();
+          if (aj && aj.downloadButtonStatus === 'DOWNLOADABLE') {
+            const pr = await fetch(`${base}/api/goods/publish-coupons`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ goodsId: Number(p.pid) }) });
+            if (pr.status === 401) { login = false; break; }
+            await sleep(400);
+          }
+        }
+        const r = await fetch(`${base}/api/goods/${p.pid}/coupons${p.price ? `?price=${p.price}` : ''}`, { credentials: 'include', cache: 'no-store', headers: { Accept: 'application/json' } });
         if (r.status === 401) { login = false; break; }
-        if (!r.ok) continue;
-        const j = await r.json();
-        (j.sections || []).forEach((sec) => (sec.coupons || []).forEach((c) => {
-          const id = String(c.couponMoldId || '');
-          if (!id) return;
-          info[id] = {
-            t: c.title || '',
-            r: Number(c.discountRatio) || undefined,
-            amt: c.discountAmount || '',
-            dt: c.discountType || '',
-            max: Number(c.maximumDiscountAmount) || 0,
-            min: Number(c.minimumPayment) || 0,
-            end: c.endAt ? toKst(c.endAt) : null,
-            kind: c.couponType || sec.couponType || '',
-            chk: today,
-          };
-          if (!info[id].r) delete info[id].r;
-        }));
+        if (r.ok) {
+          const j = await r.json();
+          (j.sections || []).forEach((sec) => (sec.coupons || []).forEach((c) => {
+            const id = String(c.couponMoldId || '');
+            if (!id) return;
+            if (c.endAt && c.endAt < nowIso) return; // 이미 끝난 쿠폰
+            const x = info[id] || (info[id] = { pids: {}, stores: {} });
+            x.pids[p.pid] = 1;
+            x.stores[p.store] = 1;
+            Object.assign(x, {
+              t: c.title || '',
+              amt: c.discountAmount || '',
+              dt: c.discountType || '',
+              max: Number(c.maximumDiscountAmount) || 0,
+              min: Number(c.minimumPayment) || 0,
+              end: c.endAt ? toKst(c.endAt) : null,
+              kind: c.couponType || sec.couponType || '',
+            });
+            if (Number(c.discountRatio)) x.r = Number(c.discountRatio);
+            got++;
+          }));
+        }
       } catch (e) { /* 다음 상품 */ }
-      await sleep(800 + Math.random() * 700);
+      await sleep(500 + Math.random() * 600);
     }
-    return { info, login };
+    return { info, login, got };
   }
 
   // ---------------- 상품 목록, 단위 읽기 (products.txt, units.json) ----------------
@@ -458,7 +474,7 @@
       entry: {
         channelId: 'oh' + (brand.id || 0),
         productNo: String(pid),
-        storeName: brand.name || '오늘의집',
+        storeName: String(brand.name || '오늘의집').trim(),
         productName: pr.name || `상품 ${pid}`,
         nowKey,
         today,
@@ -527,9 +543,8 @@
       if (!entries.length) {
         say('올릴 결과 없음' + note);
       } else {
-        say('쿠폰 기간 확인 중...' + note);
         let ci = { info: {}, login: true };
-        try { ci = await readCouponInfo(entries, today); } catch (e) { /* 쿠폰 정보 없이 계속 */ }
+        try { ci = await readCouponInfo(entries, (t) => say(t + note)); } catch (e) { /* 쿠폰 정보 없이 계속 */ }
         const note2 = note + (ci.login ? '' : '\n쿠폰 종료일은 오늘의집 로그인이 돼 있어야 읽혀요 (이 크롬에서 오늘의집 로그인 필요)');
         say(`${entries.length}개 상품 깃허브에 올리는 중...` + note2);
         let ok = false, lastErr = '';

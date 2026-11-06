@@ -166,7 +166,7 @@
   .cal-bar { position:relative; z-index:3; margin:1px 2px; height:17px; line-height:17px; border-radius:4px; color:#fff; font-size:11px; font-weight:700; padding:0 6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:pointer; box-shadow:0 1px 1px rgba(0,0,0,.15); }
   .cal-bar.cont-l { border-top-left-radius:0; border-bottom-left-radius:0; margin-left:-2px; }
   .cal-bar.cont-r { border-top-right-radius:0; border-bottom-right-radius:0; margin-right:-2px; }
-  .cal-bar.plan { opacity:.55; background-image:repeating-linear-gradient(45deg, rgba(255,255,255,.35) 0 4px, transparent 4px 8px); }
+  .cal-bar .ext { background:#fff; color:#b91c1c; border-radius:3px; padding:0 3px; margin-left:4px; font-size:10px; }
   .cal-bar.cut { background:#ea580c !important; }
   .ph-tbl { width:100%; border-collapse:collapse; font-size:12px; margin-top:6px; }
   .ph-tbl th, .ph-tbl td { padding:4px 6px; border-bottom:1px solid #f0f0f0; text-align:left; white-space:nowrap; }
@@ -240,7 +240,7 @@
         스토어 이름표와 아래 표 스토어명 앞 파란 '▲'는 재고가 한 번에 200박스(장판은 200m) 이상 늘어난 곳이에요 (입고 또는 사람이 숫자를 늘림, 판매량에는 영향 없음).<br>
         주황 '!'는 한 번에 200박스(장판은 200m) 이상 줄어서 사람이 재고를 직접 고친 것으로 의심되는 곳이에요. 합계에서 빠져 있고, 표에서 줄을 눌러 판매로 인정하면 다시 들어가요.<br>
         표 맨 오른쪽 최근확인은 가장 최근에 조회한 시각이에요. 재고가 -1(무제한)로 설정된 옵션은 판매량을 알 수 없어서 목록에 안 나와요.<br>
-        날짜 아래 색깔 줄은 스토어별 행사 기간이에요 (스토어 색 = 상품쿠폰, 주황 = 판매가 인하, 빗금 = 쿠폰 종료일까지 남은 예정 기간). 줄에 마우스를 올리면 쿠폰 이름, 할인율, 종료일이 나오고, 누르면 그날 표 위에 할인 상품이 나와요.<br>
+        날짜 아래 색깔 줄은 스토어별 행사 기간이에요 (스토어 색 = 상품쿠폰, 쿠폰 종료일까지 이어짐 · 주황 = 판매가 인하 · 흰 '연장' = 종료일이 늘어난 쿠폰). 줄에 마우스를 올리면 쿠폰 이름, 할인율, 남은 기간, 연장 내역이 나오고, 누르면 그날 표 위에 할인 상품이 나와요.<br>
         초록 금액은 그날 추정 매출이에요 (판매 수량 × 그날 오늘의집 옵션 판매가, 쿠폰 할인 전).
       </div>
   </div>
@@ -1137,18 +1137,9 @@ function renderCalendar() {
       const col = b.kind === 'cut' ? '#ea580c' : storeColor(b.store);
       const contL = b.from < days[sg.s0];
       const contR = b.to > days[sg.e0];
-      // 오늘까지는 진한 줄, 쿠폰 종료일까지 남은 예정 구간은 빗금
-      let r1 = -1; days.forEach((d, i) => { if (d && d <= b.real && i >= sg.s0 && i <= sg.e0) r1 = i; });
-      const parts = [];
-      if (r1 >= sg.s0) parts.push({ s: sg.s0, e: r1, plan: false });
-      if (r1 < sg.e0) parts.push({ s: Math.max(sg.s0, r1 + 1), e: sg.e0, plan: true });
-      parts.forEach((pt, pi) => {
-        const cl = pi === 0 ? contL : true;
-        const cr = pi === parts.length - 1 ? contR : true;
-        const cls = ['cal-bar', b.kind === 'cut' ? 'cut' : '', cl ? 'cont-l' : '', cr ? 'cont-r' : '', pt.plan ? 'plan' : ''].filter(Boolean).join(' ');
-        const text = pi === 0 ? `${contL ? '◀ ' : ''}${esc(b.label)}` : (parts.length > 1 ? '종료 예정' : esc(b.label));
-        wh += `<div class="${cls}" style="grid-row:${sg.l + 2};grid-column:${pt.s + 1} / ${pt.e + 2};background:${col}" title="${esc(b.tip)}" data-bday="${days[pt.s]}">${text}</div>`;
-      });
+      // 쿠폰 종료일까지 같은 색으로 이어서 표시
+      const cls = ['cal-bar', b.kind === 'cut' ? 'cut' : '', contL ? 'cont-l' : '', contR ? 'cont-r' : ''].filter(Boolean).join(' ');
+      wh += `<div class="${cls}" style="grid-row:${sg.l + 2};grid-column:${sg.s0 + 1} / ${sg.e0 + 2};background:${col}" title="${esc(b.tip)}" data-bday="${days[sg.s0]}">${contL ? '◀ ' : ''}${esc(b.label)}${b.ext ? ' <span class="ext">연장</span>' : ''}</div>`;
     });
     wh += '</div>';
     out += wh;
@@ -1813,7 +1804,11 @@ function promoBars() {
       const to = active ? (endDay && endDay >= today ? endDay : today) : lastDay;
       for (let d = from; d <= to; d = addDays1(d, 1)) covered.add(d);
       const rate = c.r ? `${c.r}%` : '';
-      bars.push({ store, kind: 'coupon', from, to, real: active ? today : lastDay, label: `${store} 쿠폰 ${rate}`.trim(), tip: `${store} · ${c.t || '상품쿠폰'} ${rate}${c.max ? ` · 최대 ${fmtWonFull(c.max)}` : ''}${c.min > 1 ? ` · ${fmtWonFull(c.min)} 이상` : ''}\n${md(from)} ~ ${md(to)}${active ? (endDay ? ` (종료 예정 ${c.end.replace('T', ' ')})` : ' (진행중, 종료일 모름)') : ' (종료)'}`, id });
+      // 쿠폰 이름에서 스토어명, 할인율, '쿠폰' 글자를 빼서 짧게 (예: 오세일 원데이)
+      const short = String(c.t || '').replace(/주식회사\s*/g, '').replace(new RegExp(store.replace(/주식회사\s*/g, '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), '').replace(/\d+%/g, '').replace(/쿠폰/g, '').replace(/\s+/g, ' ').trim();
+      const ext = Array.isArray(c.ext) && c.ext.length ? c.ext : null;
+      const extTxt = ext ? ` (연장 ${ext.map((x) => `${md(couponEndDay({ end: x.from }))}→${md(couponEndDay({ end: x.to }))}`).join(', ')})` : '';
+      bars.push({ store, kind: 'coupon', ext: !!ext, from, to, real: active ? today : lastDay, label: `${store} ${rate} ${short}`.replace(/\s+/g, ' ').trim(), tip: `${store} · ${c.t || '상품쿠폰'} ${rate}${c.max ? ` · 최대 ${fmtWonFull(c.max)}` : ''}${c.min > 1 ? ` · ${fmtWonFull(c.min)} 이상` : ''}${extTxt}\n${md(from)} ~ ${md(to)}${active ? (endDay ? ` (종료 ${c.end.replace('T', ' ')}, ${leftText(c.end)})` : ' (진행중, 종료일 모름)') : ' (종료)'}`, id });
     });
     // 2) 가격 기록으로 본 쿠폰, 판매가 인하 (날짜별)
     const keys = its.map((it) => it.key);
@@ -1863,7 +1858,7 @@ function renderPromoHist() {
   const matRows = stores.map((st) => `<tr><td><span class="ph-sw" style="background:${storeColor(st)}"></span>${esc(st)}</td>${mat[st].map((set) => `<td class="c">${set.size || ''}</td>`).join('')}<td class="c"><b>${mat[st].reduce((n, x) => n + x.size, 0) || ''}</b></td></tr>`).join('');
   const rows = bars.slice().sort((a, b) => (a.from < b.from ? 1 : -1)).map((b) => {
     const live = b.to >= today;
-    return `<tr><td>${b.from.slice(0, 4)}.${md(b.from)} ~ ${b.to.slice(0, 4) !== b.from.slice(0, 4) ? b.to.slice(0, 4) + '.' : ''}${md(b.to)}</td><td><span class="ph-sw" style="background:${b.kind === 'cut' ? '#ea580c' : storeColor(b.store)}"></span>${esc(b.store)}</td><td>${esc(b.tip.split('\n')[0].replace(b.store + ' · ', ''))}</td><td class="num">${dayCount(b)}일</td><td>${live ? (b.to > today ? '진행중 (종료 예정)' : '진행중') : '종료'}</td></tr>`;
+    return `<tr><td>${b.from.slice(0, 4)}.${md(b.from)} ~ ${b.to.slice(0, 4) !== b.from.slice(0, 4) ? b.to.slice(0, 4) + '.' : ''}${md(b.to)}</td><td><span class="ph-sw" style="background:${b.kind === 'cut' ? '#ea580c' : storeColor(b.store)}"></span>${esc(b.store)}</td><td>${esc(b.tip.split('\n')[0].replace(b.store + ' · ', ''))}</td><td class="num">${dayCount(b)}일</td><td>${live ? (b.to > today ? `진행중 (${md(b.to)} 종료 예정)` : '진행중') : '종료'}${b.ext ? ' · 연장' : ''}</td></tr>`;
   }).join('');
   el.innerHTML = `<details class="calc-sec" style="margin-top:12px" open><summary style="cursor:pointer">${y}년 월별 행사 일수 (위에서 고른 스토어 기준)</summary>
     <table class="ph-tbl ph-mat"><tr><th>스토어</th>${Array.from({ length: 12 }, (_, i) => `<th class="num" style="text-align:center">${i + 1}월</th>`).join('')}<th style="text-align:center">합계</th></tr>${matRows}</table>
