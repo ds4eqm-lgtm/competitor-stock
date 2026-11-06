@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         오늘의집 판매량 추적기
 // @namespace    ohouse-stock-tracker
-// @version      1.3
+// @version      1.4
 // @description  오늘의집 상품 옵션별 재고를 매시간 읽어서 판매추정을 깃허브 ohouse 폴더에 기록 (네이버용 추적기와 따로 동작)
 // @match        https://store.ohou.se/*
 // @match        https://ds4eqm-lgtm.github.io/competitor-stock/ohouse/*
@@ -230,8 +230,9 @@
   }
 
   // entry = { channelId, productNo, storeName, productName, nowKey, today, options: [{id, name, stock, price}] }
-  async function uploadEntries(entries) {
+  async function uploadEntries(entries, couponInfo) {
     if (!entries.length) return;
+    const runStart = {}; // { 상품번호: 지금 걸린 쿠폰이 처음 보인 시각 } 새 쿠폰 시작일 채우기용
     const now = new Date();
     const cutoff = new Date(now);
     cutoff.setDate(cutoff.getDate() - HISTORY_KEEP_DAYS);
@@ -278,6 +279,12 @@
         if (Array.isArray(opt.pr)) {
           const lk = Object.keys(pm).sort().pop();
           if (!lk || JSON.stringify(pm[lk]) !== JSON.stringify(opt.pr)) pm[en.nowKey] = opt.pr;
+          if (opt.pr[2] > 0) {
+            const ts = Object.keys(pm).sort();
+            let st = en.nowKey;
+            for (let i = ts.length - 1; i >= 0 && Number(pm[ts[i]][2]) > 0; i--) st = ts[i];
+            if (!runStart[en.productNo] || st < runStart[en.productNo]) runStart[en.productNo] = st;
+          }
         }
         latest[key] = {
           store: en.storeName,
@@ -294,6 +301,70 @@
       }));
       return latest;
     }, `오늘의집 판매량 업데이트 ${label} ${stamp.slice(0, 10)}`);
+
+    // 쿠폰 기록 (영구 보관, 지우지 않음): ohouse/data/promos.json
+    // coupons { 쿠폰번호: { t 이름, r 할인율, max 최대할인, min 최소주문, dt 할인방식, end 종료시각(한국시간), first 처음 본 시각, last 마지막 본 시각, stores {스토어:1}, pids {상품번호:1} } }
+    await updateJsonFile(`${DIR}data/promos.json`, (pr) => {
+      pr.coupons = pr.coupons || {};
+      entries.forEach((en) => en.options.forEach((opt) => (opt.plans || []).forEach(([id, amt]) => {
+        const m = pr.coupons[id] || (pr.coupons[id] = { first: runStart[en.productNo] || en.nowKey, stores: {}, pids: {} });
+        if (!m.last || en.nowKey > m.last) m.last = en.nowKey;
+        if (runStart[en.productNo] && runStart[en.productNo] < m.first) m.first = runStart[en.productNo];
+        m.stores[en.storeName] = 1;
+        m.pids[en.productNo] = 1;
+        if (!m.r && opt.price > 0 && amt > 0) m.r = Math.round((amt / opt.price) * 100);
+      })));
+      Object.entries(couponInfo || {}).forEach(([id, c]) => {
+        const m = pr.coupons[id];
+        if (!m) return;
+        Object.assign(m, c);
+      });
+      pr._meta = { last: stamp };
+      return pr;
+    }, `오늘의집 쿠폰 기록 ${stamp}`);
+  }
+
+  // 쿠폰 이름, 종료일 읽기 (오늘의집 로그인 필요, 쿠폰을 받지는 않음)
+  // 처음 보는 쿠폰이거나 오늘 아직 확인 안 한 쿠폰만, 쿠폰마다 상품 하나로 한 번만 물어봄
+  const toKst = (iso) => { const d = new Date(iso); if (isNaN(d)) return null; return `${ymd(d)}T${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+  async function readCouponInfo(entries, today) {
+    const info = {};
+    let known = {};
+    try { known = ((await getJsonFile(`${DIR}data/promos.json`)).content || {}).coupons || {}; } catch (e) { known = {}; }
+    const need = {}; // { 쿠폰번호: 상품번호 }
+    entries.forEach((en) => en.options.forEach((opt) => (opt.plans || []).forEach(([id]) => {
+      const k = known[id];
+      if ((!k || k.chk !== today) && !need[id]) need[id] = en.productNo;
+    })));
+    const pids = [...new Set(Object.values(need))];
+    let login = true;
+    for (const pid of pids) {
+      if (!Object.keys(need).some((id) => need[id] === pid && !info[id])) continue;
+      try {
+        const r = await fetch(`${window.location.origin}/api/goods/${pid}/coupons`, { credentials: 'include', cache: 'no-store', headers: { Accept: 'application/json' } });
+        if (r.status === 401) { login = false; break; }
+        if (!r.ok) continue;
+        const j = await r.json();
+        (j.sections || []).forEach((sec) => (sec.coupons || []).forEach((c) => {
+          const id = String(c.couponMoldId || '');
+          if (!id) return;
+          info[id] = {
+            t: c.title || '',
+            r: Number(c.discountRatio) || undefined,
+            amt: c.discountAmount || '',
+            dt: c.discountType || '',
+            max: Number(c.maximumDiscountAmount) || 0,
+            min: Number(c.minimumPayment) || 0,
+            end: c.endAt ? toKst(c.endAt) : null,
+            kind: c.couponType || sec.couponType || '',
+            chk: today,
+          };
+          if (!info[id].r) delete info[id].r;
+        }));
+      } catch (e) { /* 다음 상품 */ }
+      await sleep(800 + Math.random() * 700);
+    }
+    return { info, login };
   }
 
   // ---------------- 상품 목록, 단위 읽기 (products.txt, units.json) ----------------
@@ -376,10 +447,11 @@
       const name = [o.explain, o.explain2].filter((x) => x && String(x).trim()).join(' / ') || String(o.id);
       const price = Number((o.price && (o.price.sellingPrice || o.price.salePrice)) || o.sellingCost) || null;
       // 프로모션 확인용 [정가, 판매가, 상품쿠폰 할인액]
-      const plans = (o.price && Array.isArray(o.price.discountPlans)) ? o.price.discountPlans : [];
-      const coupon = plans.reduce((n, d) => n + (Number(d && d.discountAmount) || 0), 0);
+      const plans0 = (o.price && Array.isArray(o.price.discountPlans)) ? o.price.discountPlans : [];
+      const coupon = plans0.reduce((n, d) => n + (Number(d && d.discountAmount) || 0), 0);
       const pr = [Number(o.price && o.price.regularPrice) || 0, price || 0, coupon];
-      options.push({ id: String(o.id), name, stock: st, price, pr });
+      const plans = plans0.filter((d) => d && d.planId).map((d) => [String(d.planId), Number(d.discountAmount) || 0, String(d.planType || '')]);
+      options.push({ id: String(o.id), name, stock: st, price, pr, plans });
     });
     const brand = pr.brand || {};
     return {
@@ -455,10 +527,14 @@
       if (!entries.length) {
         say('올릴 결과 없음' + note);
       } else {
-        say(`${entries.length}개 상품 깃허브에 올리는 중...` + note);
+        say('쿠폰 기간 확인 중...' + note);
+        let ci = { info: {}, login: true };
+        try { ci = await readCouponInfo(entries, today); } catch (e) { /* 쿠폰 정보 없이 계속 */ }
+        const note2 = note + (ci.login ? '' : '\n쿠폰 종료일은 오늘의집 로그인이 돼 있어야 읽혀요 (이 크롬에서 오늘의집 로그인 필요)');
+        say(`${entries.length}개 상품 깃허브에 올리는 중...` + note2);
         let ok = false, lastErr = '';
         for (let attempt = 1; attempt <= 3 && !ok; attempt++) {
-          try { await uploadEntries(entries); ok = true; } catch (e) {
+          try { await uploadEntries(entries, ci.info); ok = true; } catch (e) {
             lastErr = (e && e.message) || String(e);
             say(`업로드 실패 ${attempt}/3: ${lastErr}`);
             if (attempt < 3) await sleep(30000);
@@ -472,7 +548,7 @@
           return;
         }
         keys.forEach((k) => GM_deleteValue(k));
-        say(`${entries.length}개 상품 업로드 완료` + note);
+        say(`${entries.length}개 상품 업로드 완료` + note2);
       }
       GM_setValue('oh_lock', 0);
       closeLater(fail ? 60000 : 6000);

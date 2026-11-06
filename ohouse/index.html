@@ -156,7 +156,24 @@
   .rg-days td, .rg-days th { padding:3px 8px; border-bottom:1px solid #eee; text-align:right; }
   .rg-days td:first-child, .rg-days th:first-child { text-align:left; }
   .recs .r.fine { background:#fef08a; border-radius:4px; }
-  .cal-day .promo { position:absolute; left:4px; bottom:3px; font-size:10px; font-weight:800; color:#fff; background:#7c3aed; border-radius:3px; padding:0 3px; line-height:14px; }
+  .cal-card { margin-bottom:16px; }
+  .cal-wrap .cal-dows { display:grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap:0 4px; }
+  .cal-week { display:grid; grid-template-columns: repeat(7, minmax(0, 1fr)); column-gap:4px; margin-bottom:4px; }
+  .cal-week .cal-day { grid-row: 1 / -1; min-height:112px; font-size:13px; }
+  .cal-week .cal-day .v { font-size:15px; }
+  .cal-week .cal-day .ts { font-size:11px; }
+  .cal-week .cal-day .rev { font-size:12px; }
+  .cal-bar { position:relative; z-index:3; margin:1px 2px; height:17px; line-height:17px; border-radius:4px; color:#fff; font-size:11px; font-weight:700; padding:0 6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:pointer; box-shadow:0 1px 1px rgba(0,0,0,.15); }
+  .cal-bar.cont-l { border-top-left-radius:0; border-bottom-left-radius:0; margin-left:-2px; }
+  .cal-bar.cont-r { border-top-right-radius:0; border-bottom-right-radius:0; margin-right:-2px; }
+  .cal-bar.plan { opacity:.55; background-image:repeating-linear-gradient(45deg, rgba(255,255,255,.35) 0 4px, transparent 4px 8px); }
+  .cal-bar.cut { background:#ea580c !important; }
+  .ph-tbl { width:100%; border-collapse:collapse; font-size:12px; margin-top:6px; }
+  .ph-tbl th, .ph-tbl td { padding:4px 6px; border-bottom:1px solid #f0f0f0; text-align:left; white-space:nowrap; }
+  .ph-tbl th { background:#fafafa; }
+  .ph-tbl td.num, .ph-tbl th.num { text-align:right; }
+  .ph-mat td.c { text-align:center; }
+  .ph-sw { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:4px; vertical-align:-1px; }
   .promo-sub { display:block; font-size:11px; color:#7c3aed; font-weight:700; white-space:nowrap; }
   .promo-box { border:1px solid #c4b5fd; background:#f5f3ff; border-radius:8px; padding:8px 10px; margin-bottom:10px; font-size:13px; }
   .promo-box .pt { font-weight:800; color:#5b21b6; margin-bottom:4px; }
@@ -207,14 +224,14 @@
     <div id="sfBody"></div>
   </div>
 
-  <div class="layout">
-    <div class="card">
+  <div class="card cal-card">
       <div class="cal-head">
         <button class="cal-nav" id="prevM">&lt;</button>
         <b id="calTitle"></b>
         <button class="cal-nav" id="nextM">&gt;</button>
       </div>
-      <div class="cal-grid" id="cal"></div>
+      <div class="cal-wrap" id="cal"></div>
+      <div id="promoHist"></div>
       <div class="cal-note">
         날짜 칸 숫자는 그날 판매량 합계예요 (위에서 고른 스토어 기준).<br>
         근무일 기준이에요. 1타임(아침물량)은 직전 근무일 17시 조회부터 그날 07시 조회까지, 2타임(오후물량)은 08시 조회부터 16시 조회까지예요. 큰 숫자가 둘을 합친 전체예요.<br>
@@ -223,9 +240,13 @@
         스토어 이름표와 아래 표 스토어명 앞 파란 '▲'는 재고가 한 번에 200박스(장판은 200m) 이상 늘어난 곳이에요 (입고 또는 사람이 숫자를 늘림, 판매량에는 영향 없음).<br>
         주황 '!'는 한 번에 200박스(장판은 200m) 이상 줄어서 사람이 재고를 직접 고친 것으로 의심되는 곳이에요. 합계에서 빠져 있고, 표에서 줄을 눌러 판매로 인정하면 다시 들어가요.<br>
         표 맨 오른쪽 최근확인은 가장 최근에 조회한 시각이에요. 재고가 -1(무제한)로 설정된 옵션은 판매량을 알 수 없어서 목록에 안 나와요.<br>
-        보라 '할인'은 그날 쿠폰이 걸려 있었거나 판매가를 내린 상품이 있는 날이에요 (위에서 고른 스토어 기준). 날짜를 누르면 표 위에 할인율, 할인가, 기간이 나와요.<br>
+        날짜 아래 색깔 줄은 스토어별 행사 기간이에요 (스토어 색 = 상품쿠폰, 주황 = 판매가 인하, 빗금 = 쿠폰 종료일까지 남은 예정 기간). 줄에 마우스를 올리면 쿠폰 이름, 할인율, 종료일이 나오고, 누르면 그날 표 위에 할인 상품이 나와요.<br>
         초록 금액은 그날 추정 매출이에요 (판매 수량 × 그날 오늘의집 옵션 판매가, 쿠폰 할인 전).
       </div>
+  </div>
+
+  <div class="layout">
+    <div class="card">
       <div class="calc">
         <div class="calc-title">매출 계산기</div>
         <div class="calc-row">
@@ -1059,15 +1080,17 @@ function renderCalendar() {
     if (t && t > max) max = t;
   }
 
-  let html = ['일', '월', '화', '수', '목', '금', '토']
-    .map((w, i) => `<div class="cal-dow${i === 0 ? ' sun' : i === 6 ? ' sat' : ''}">${w}</div>`).join('');
-  for (let i = 0; i < first.getDay(); i++) html += '<div class="cal-day blank"></div>';
+  const cells = [];
+  for (let i = 0; i < first.getDay(); i++) cells.push({ html: '<div class="cal-day blank"></div>' });
+  let html = '';
   for (let d = 1; d <= lastDate; d++) {
+    html = '';
     const day = ymd(new Date(y, m, d));
     const t = totals[day];
     const has = !!dayData[day];
     if (!isWorkday(day)) {
       html += `<div class="cal-day off" title="쉬는 날 판매량은 ${nextWorkday(day).slice(5).replace('-', '/')} 1타임에 포함돼요"><span class="n">${d}</span><span class="offl">휴무</span><span class="ts">→ ${Number(nextWorkday(day).slice(5, 7))}/${Number(nextWorkday(day).slice(8))}</span></div>`;
+      cells.push({ day, html });
       continue;
     }
     const cls = ['cal-day'];
@@ -1077,11 +1100,68 @@ function renderCalendar() {
     const style = alpha ? `style="background:rgba(59,130,246,${alpha.toFixed(2)})"` : '';
     html += `<div class="${cls.join(' ')}" data-day="${day}" ${style}>
       <span class="n">${d}</span>${day === currentDay ? '<span class="live">진행중</span>' : ''}
-      ${has ? calCellNums(day) : ''}${has ? calRevHtml(day) : ''}${has && dayHasPromo(day) ? '<span class="promo" title="이 날 할인(쿠폰 또는 판매가 인하) 중인 상품이 있어요">할인</span>' : ''}
+      ${has ? calCellNums(day) : ''}${has ? calRevHtml(day) : ''}
     </div>`;
+    cells.push({ day, html });
+  }
+  while (cells.length % 7) cells.push({ html: '<div class="cal-day blank"></div>' });
+  // 주마다 칸 + 행사 막대(스토어별로 이어진 줄)
+  const bars = promoBars();
+  let out = `<div class="cal-dows">${['일', '월', '화', '수', '목', '금', '토'].map((w, i) => `<div class="cal-dow${i === 0 ? ' sun' : i === 6 ? ' sat' : ''}">${w}</div>`).join('')}</div>`;
+  for (let w = 0; w < cells.length / 7; w++) {
+    const wk = cells.slice(w * 7, w * 7 + 7);
+    const days = wk.map((c) => c.day || null);
+    const real = days.filter(Boolean);
+    const wFrom = real[0], wTo = real[real.length - 1];
+    const segs = [];
+    if (wFrom) bars.forEach((b) => {
+      if (b.to < wFrom || b.from > wTo) return;
+      const s0 = days.findIndex((d) => d && d >= b.from);
+      let e0 = -1; days.forEach((d, i) => { if (d && d <= b.to) e0 = i; });
+      if (s0 < 0 || e0 < s0) return;
+      segs.push({ b, s0, e0 });
+    });
+    // 겹치지 않게 줄 배정
+    const lanes = [];
+    segs.forEach((sg) => {
+      let l = 0;
+      while (lanes[l] && lanes[l].some((x) => !(sg.e0 < x.s0 || sg.s0 > x.e0))) l++;
+      (lanes[l] = lanes[l] || []).push(sg);
+      sg.l = l;
+    });
+    const nL = lanes.length;
+    let wh = `<div class="cal-week" style="grid-template-rows:minmax(112px,auto)${nL ? ` repeat(${nL}, 19px) 4px` : ''}">`;
+    wk.forEach((c, i) => { wh += c.html.replace('<div class="cal-day', `<div style="grid-column:${i + 1}" class="cal-day`); });
+    segs.forEach((sg) => {
+      const b = sg.b;
+      const col = b.kind === 'cut' ? '#ea580c' : storeColor(b.store);
+      const contL = b.from < days[sg.s0];
+      const contR = b.to > days[sg.e0];
+      // 오늘까지는 진한 줄, 쿠폰 종료일까지 남은 예정 구간은 빗금
+      let r1 = -1; days.forEach((d, i) => { if (d && d <= b.real && i >= sg.s0 && i <= sg.e0) r1 = i; });
+      const parts = [];
+      if (r1 >= sg.s0) parts.push({ s: sg.s0, e: r1, plan: false });
+      if (r1 < sg.e0) parts.push({ s: Math.max(sg.s0, r1 + 1), e: sg.e0, plan: true });
+      parts.forEach((pt, pi) => {
+        const cl = pi === 0 ? contL : true;
+        const cr = pi === parts.length - 1 ? contR : true;
+        const cls = ['cal-bar', b.kind === 'cut' ? 'cut' : '', cl ? 'cont-l' : '', cr ? 'cont-r' : '', pt.plan ? 'plan' : ''].filter(Boolean).join(' ');
+        const text = pi === 0 ? `${contL ? '◀ ' : ''}${esc(b.label)}` : (parts.length > 1 ? '종료 예정' : esc(b.label));
+        wh += `<div class="${cls}" style="grid-row:${sg.l + 2};grid-column:${pt.s + 1} / ${pt.e + 2};background:${col}" title="${esc(b.tip)}" data-bday="${days[pt.s]}">${text}</div>`;
+      });
+    });
+    wh += '</div>';
+    out += wh;
   }
   const cal = document.getElementById('cal');
-  cal.innerHTML = html;
+  cal.innerHTML = out;
+  cal.querySelectorAll('.cal-bar[data-bday]').forEach((el) => el.addEventListener('click', (e) => {
+    e.stopPropagation();
+    let d = el.dataset.bday;
+    if (!isWorkday(d)) d = nextWorkday(d);
+    if (!dayData[d]) return;
+    selectedDay = d; openKey = null; showAllFor = null; renderAll();
+  }));
   cal.querySelectorAll('.cal-day[data-day]').forEach((el) => {
     if (el.classList.contains('empty')) return;
     el.addEventListener('click', () => {
@@ -1494,10 +1574,12 @@ function renderTable() {
 }
 
 function renderAll() {
+  promoBarsCache = null;
   renderLegend();
   renderCalendar();
   renderTable();
   renderPromoBox();
+  renderPromoHist();
   renderCalc();
 }
 
@@ -1633,10 +1715,9 @@ function promoInfo(key, day) {
   const coupon = best.c > 0;
   const fin = best.s - best.c;
   return {
-    r: best.r, s: best.s, c: best.c, fin, base, cut, coupon, promo: cut || coupon,
-    siteRate: best.r > best.s ? Math.round(((best.r - best.s) / best.r) * 100) : 0,
-    finRate: best.r > fin ? Math.round(((best.r - fin) / best.r) * 100) : 0,
+    s: best.s, c: best.c, fin, base, cut, coupon, promo: cut || coupon,
     cRate: best.s > 0 ? Math.round((best.c / best.s) * 100) : 0,
+    allRate: base > 0 && base > fin ? Math.round(((base - fin) / base) * 100) : 0,
     cutRate: cut ? Math.round(((base - best.s) / base) * 100) : 0,
   };
 }
@@ -1656,11 +1737,155 @@ function promoLine(key, day) {
   if (!p || !p.promo) return '';
   const parts = [];
   if (p.cut) parts.push(`인하 ${p.cutRate}%`);
-  if (p.coupon) parts.push(`쿠폰가 ${fmtWonFull(p.fin)}`);
-  return `<span class="promo-sub" title="정가 ${fmtWonFull(p.r)} · 판매가 ${fmtWonFull(p.s)}${p.coupon ? ` · 상품쿠폰 ${fmtWonFull(p.c)}` : ''} · 정가 대비 ${p.finRate}%">${parts.join(' · ')}</span>`;
+  if (p.coupon) parts.push(`쿠폰 ${p.cRate}% ${fmtWonFull(p.fin)}`);
+  return `<span class="promo-sub" title="기본 판매가 ${fmtWonFull(p.base)} · 지금 판매가 ${fmtWonFull(p.s)}${p.coupon ? ` · 상품쿠폰 ${fmtWonFull(p.c)}(${p.cRate}%)` : ''} · 기본 판매가 대비 ${p.allRate}% 할인">${parts.join(' · ')}</span>`;
+}
+// ---------------- 쿠폰 기록 (data/promos.json, 영구 보관) ----------------
+let promosData = {};
+function couponsOfProduct(pid) {
+  const cs = (promosData && promosData.coupons) || {};
+  return Object.entries(cs).filter(([, c]) => c.pids && c.pids[String(pid)]).map(([id, c]) => Object.assign({ id }, c));
+}
+const promoLastRun = () => ((promosData && promosData._meta) || {}).last || '';
+const couponActive = (c) => !!c.last && c.last >= promoLastRun();
+// 종료시각(한국시간) → 마지막 할인 날짜 (00:00 종료면 전날까지)
+function couponEndDay(c) {
+  if (!c.end) return null;
+  const d = toDate(c.end);
+  if (d.getHours() === 0 && d.getMinutes() === 0) d.setDate(d.getDate() - 1);
+  return ymd(d);
+}
+function couponTitle(pid) {
+  const cs = couponsOfProduct(pid).filter(couponActive);
+  return cs.length && cs[0].t ? ` (${esc(cs[0].t)})` : '';
+}
+function couponEndNote(pid) {
+  const cs = couponsOfProduct(pid).filter(couponActive);
+  const c = cs.filter((x) => x.end).sort((a, b) => (a.end < b.end ? -1 : 1))[0];
+  if (!c) return '';
+  return `, ${md(couponEndDay(c))}까지 (${leftText(c.end)})`;
+}
+// 오늘의집 화면처럼 남은 시간으로 'N일 남음'
+function leftText(end) {
+  const ms = toDate(end) - new Date();
+  if (ms <= 0) return '종료';
+  const dd = Math.floor(ms / 86400000);
+  return dd >= 1 ? `${dd}일 남음` : `${Math.max(1, Math.floor(ms / 3600000))}시간 남음`;
+}
+// 날짜(0시~24시) 기준 할인 상태
+function promoOnDate(key, date) {
+  const { list, base } = promoStates(key);
+  if (!list.length) return null;
+  const start = toDate(date);
+  const end = new Date(start); end.setDate(end.getDate() + 1);
+  let st = null;
+  const act = [];
+  for (const x of list) {
+    if (x.dt <= start) st = x;
+    else if (x.dt < end) act.push(x);
+    else break;
+  }
+  if (st) act.unshift(st);
+  if (!act.length) return null;
+  const best = act.reduce((a, x) => ((x.s - x.c) < (a.s - a.c) ? x : a), act[act.length - 1]);
+  return { coupon: best.c > 0, cRate: best.s > 0 ? Math.round((best.c / best.s) * 100) : 0, cut: best.s > 0 && base > 0 && best.s < base, cutRate: base > 0 && best.s < base ? Math.round(((base - best.s) / base) * 100) : 0 };
+}
+// 스토어별 행사 막대: 쿠폰(쿠폰 기록) + 쿠폰 기록 없는 날의 쿠폰(가격 기록) + 판매가 인하(가격 기록)
+let promoBarsCache = null;
+function promoBars() {
+  if (promoBarsCache) return promoBarsCache;
+  const today = ymd(new Date());
+  const vis = items.filter(matchFilter);
+  const byStore = {};
+  vis.forEach((it) => { (byStore[it.store] = byStore[it.store] || []).push(it); });
+  const bars = [];
+  const addDays1 = (d, n) => { const x = toDate(d); x.setDate(x.getDate() + n); return ymd(x); };
+  Object.entries(byStore).forEach(([store, its]) => {
+    const pids = new Set(its.map((it) => String(it.product)));
+    // 1) 쿠폰 기록
+    const covered = new Set();
+    const cs = Object.entries((promosData && promosData.coupons) || {}).filter(([, c]) => Object.keys(c.pids || {}).some((p) => pids.has(p)));
+    cs.forEach(([id, c]) => {
+      const from = ymd(toDate(c.first || c.last));
+      const active = couponActive(c);
+      const lastDay = ymd(toDate(c.last));
+      const endDay = couponEndDay(c);
+      const to = active ? (endDay && endDay >= today ? endDay : today) : lastDay;
+      for (let d = from; d <= to; d = addDays1(d, 1)) covered.add(d);
+      const rate = c.r ? `${c.r}%` : '';
+      bars.push({ store, kind: 'coupon', from, to, real: active ? today : lastDay, label: `${store} 쿠폰 ${rate}`.trim(), tip: `${store} · ${c.t || '상품쿠폰'} ${rate}${c.max ? ` · 최대 ${fmtWonFull(c.max)}` : ''}${c.min > 1 ? ` · ${fmtWonFull(c.min)} 이상` : ''}\n${md(from)} ~ ${md(to)}${active ? (endDay ? ` (종료 예정 ${c.end.replace('T', ' ')})` : ' (진행중, 종료일 모름)') : ' (종료)'}`, id });
+    });
+    // 2) 가격 기록으로 본 쿠폰, 판매가 인하 (날짜별)
+    const keys = its.map((it) => it.key);
+    let first = null;
+    keys.forEach((k) => { const l = promoStates(k).list; if (l.length) { const d = ymd(l[0].dt); if (!first || d < first) first = d; } });
+    if (!first) return;
+    const runs = { coupon: [], cut: [] };
+    let cur = { coupon: null, cut: null };
+    for (let d = first; d <= today; d = addDays1(d, 1)) {
+      let cp = 0, cu = 0, hasC = false, hasU = false;
+      keys.forEach((k) => { const p = promoOnDate(k, d); if (!p) return; if (p.coupon) { hasC = true; cp = Math.max(cp, p.cRate); } if (p.cut) { hasU = true; cu = Math.max(cu, p.cutRate); } });
+      [['coupon', hasC && !covered.has(d), cp], ['cut', hasU, cu]].forEach(([kind, on, rate]) => {
+        if (on) { if (!cur[kind]) { cur[kind] = { from: d, to: d, rate }; runs[kind].push(cur[kind]); } else { cur[kind].to = d; cur[kind].rate = Math.max(cur[kind].rate, rate); } }
+        else cur[kind] = null;
+      });
+    }
+    runs.coupon.forEach((r) => bars.push({ store, kind: 'coupon', from: r.from, to: r.to, real: r.to, label: `${store} 쿠폰 최대 ${r.rate}%`, tip: `${store} · 상품쿠폰 최대 ${r.rate}% (가격 기록 기준, 쿠폰 이름·종료일 모름)\n${md(r.from)} ~ ${r.to >= today ? '진행중' : md(r.to)}` }));
+    runs.cut.forEach((r) => bars.push({ store, kind: 'cut', from: r.from, to: r.to, real: r.to, label: `${store} 가격인하 최대 ${r.rate}%`, tip: `${store} · 판매가 인하 최대 ${r.rate}% (기본 판매가 대비)\n${md(r.from)} ~ ${r.to >= today ? '진행중' : md(r.to)}` }));
+  });
+  bars.sort((a, b) => (a.from < b.from ? -1 : a.from > b.from ? 1 : (b.to > a.to ? 1 : -1)));
+  promoBarsCache = bars;
+  return bars;
+}
+function storeColor(store) {
+  const it = items.find((x) => x.store === store);
+  const c = it ? productColor(it) : null;
+  return c ? c.accent : '#7c3aed';
+}
+// 행사 기록 표 + 월별 행사 일수 (달력 아래)
+function renderPromoHist() {
+  const el = document.getElementById('promoHist');
+  if (!el) return;
+  const bars = promoBars();
+  if (!bars.length) { el.innerHTML = ''; return; }
+  const today = ymd(new Date());
+  const y = calMonth.getFullYear();
+  const dayCount = (b) => Math.round((toDate(b.to) - toDate(b.from)) / 86400000) + 1;
+  // 월별 행사 일수 (그 해, 스토어별, 쿠폰+가격인하 합친 날짜 수)
+  const stores = [...new Set(bars.map((b) => b.store))];
+  const mat = {};
+  stores.forEach((st) => { mat[st] = Array.from({ length: 12 }, () => new Set()); });
+  bars.forEach((b) => {
+    for (let d = toDate(b.from); ymd(d) <= (b.real < b.to ? b.real : b.to); d.setDate(d.getDate() + 1)) {
+      if (d.getFullYear() === y) mat[b.store][d.getMonth()].add(ymd(d));
+    }
+  });
+  const matRows = stores.map((st) => `<tr><td><span class="ph-sw" style="background:${storeColor(st)}"></span>${esc(st)}</td>${mat[st].map((set) => `<td class="c">${set.size || ''}</td>`).join('')}<td class="c"><b>${mat[st].reduce((n, x) => n + x.size, 0) || ''}</b></td></tr>`).join('');
+  const rows = bars.slice().sort((a, b) => (a.from < b.from ? 1 : -1)).map((b) => {
+    const live = b.to >= today;
+    return `<tr><td>${b.from.slice(0, 4)}.${md(b.from)} ~ ${b.to.slice(0, 4) !== b.from.slice(0, 4) ? b.to.slice(0, 4) + '.' : ''}${md(b.to)}</td><td><span class="ph-sw" style="background:${b.kind === 'cut' ? '#ea580c' : storeColor(b.store)}"></span>${esc(b.store)}</td><td>${esc(b.tip.split('\n')[0].replace(b.store + ' · ', ''))}</td><td class="num">${dayCount(b)}일</td><td>${live ? (b.to > today ? '진행중 (종료 예정)' : '진행중') : '종료'}</td></tr>`;
+  }).join('');
+  el.innerHTML = `<details class="calc-sec" style="margin-top:12px" open><summary style="cursor:pointer">${y}년 월별 행사 일수 (위에서 고른 스토어 기준)</summary>
+    <table class="ph-tbl ph-mat"><tr><th>스토어</th>${Array.from({ length: 12 }, (_, i) => `<th class="num" style="text-align:center">${i + 1}월</th>`).join('')}<th style="text-align:center">합계</th></tr>${matRows}</table>
+    <div class="small" style="white-space:normal">쿠폰이나 판매가 인하가 걸려 있던 날짜 수예요. 달력에서 연도를 넘기면 그 해 기준으로 바뀌어요.</div></details>
+    <details class="calc-sec" style="margin-top:8px"><summary style="cursor:pointer">행사 기록 전체 ${bars.length}건 (최근 순, 영구 보관)</summary>
+    <table class="ph-tbl"><tr><th>기간</th><th>스토어</th><th>내용</th><th class="num">일수</th><th>상태</th></tr>${rows}</table></details>`;
 }
 function dayHasPromo(day) {
   return items.some((it) => matchFilter(it) && (promoInfo(it.key, day) || {}).promo);
+}
+// 기간: 달력 줄(날짜 기준)과 같게, 쿠폰 줄이 있으면 그걸 씀
+function periodText(g, from, to, fromStart, live) {
+  const firstRec = (() => { let f = null; items.filter((x) => x.product === g.it.product).forEach((x) => { const l = promoStates(x.key).list; if (l.length) { const d = ymd(l[0].dt); if (!f || d < f) f = d; } }); return f; })();
+  const bars = promoBars().filter((b) => b.store === g.it.store && b.from <= selectedDay && b.to >= prevWorkday(selectedDay));
+  const cb = bars.find((b) => b.kind === 'coupon') || bars[0];
+  const today = ymd(new Date());
+  if (cb) {
+    const fs = firstRec && cb.from <= firstRec ? `${md(cb.from)}(기록 시작) 이전부터` : md(cb.from);
+    if (cb.real >= today) return `${fs} ~ 진행중${couponEndNote(g.it.product)}`;
+    return `${fs} ~ ${md(cb.to)}`;
+  }
+  return `${fromStart ? `${md(from)}(기록 시작) 이전부터` : md(from)} ~ ${live ? `진행중${couponEndNote(g.it.product)}` : md(to)}`;
 }
 // 표 위 프로모션 요약: 상품(링크)별로 묶어서 보여줌
 function renderPromoBox() {
@@ -1688,18 +1913,18 @@ function renderPromoBox() {
     const fromStart = g.runs.some((r) => r.fromStart && r.from === from);
     const live = g.runs.some((r) => r.live);
     const kinds = [];
-    if (ps.some((p) => p.coupon)) kinds.push(`상품쿠폰 ${rng(ps.filter((p) => p.coupon).map((p) => p.cRate), pct)}`);
+    if (ps.some((p) => p.coupon)) kinds.push(`상품쿠폰 ${rng(ps.filter((p) => p.coupon).map((p) => p.cRate), pct)}${couponTitle(g.it.product)}`);
     if (ps.some((p) => p.cut)) kinds.push(`판매가 인하 ${rng(ps.filter((p) => p.cut).map((p) => p.cutRate), pct)}`);
     const total = items.filter((x) => x.product === g.it.product).length;
     return `<div class="pr"><span><b>${esc(g.it.store)}</b> ${esc(g.it.productName || '')}</span>
       <span>옵션 ${ps.length}/${total}개</span>
       <span>${kinds.join(' · ')}</span>
       <span>판매가 ${rng(ps.map((p) => p.s), won)} → 할인 적용가 <b>${rng(ps.map((p) => p.fin), won)}</b></span>
-      <span>정가 대비 ${rng(ps.map((p) => p.finRate), pct)}</span>
-      <span>기간 ${fromStart ? `${md(from)}(기록 시작) 이전부터` : md(from)} ~ ${live ? '진행중' : md(to)}</span></div>`;
+      <span>총 할인 ${rng(ps.map((p) => p.allRate), pct)}</span>
+      <span>기간 ${periodText(g, from, to, fromStart, live)}</span></div>`;
   }).join('');
   box.innerHTML = `<div class="promo-box"><div class="pt">이 날 할인 중인 상품 ${gs.length}개</div>${rows}
-    <div class="small" style="white-space:normal;margin-top:4px">할인 적용가 = 판매가 − 상품쿠폰. 판매가 인하는 지금까지 기록된 가장 높은 판매가 대비예요. 정가 대비는 오늘의집 화면에 나오는 정가 기준 할인율이에요.</div></div>`;
+    <div class="small" style="white-space:normal;margin-top:4px">기본 판매가 = 지금까지 기록된 가장 높은 판매가. 판매가 인하는 기본 판매가 대비, 쿠폰 %는 판매가 대비, 총 할인은 기본 판매가에서 판매가 인하와 쿠폰을 모두 뺀 할인율이에요. 할인 적용가 = 판매가 − 상품쿠폰.</div></div>`;
 }
 function fmtWonShort(n) {
   if (n >= 100000000) return `${(n / 100000000).toFixed(2).replace(/\.?0+$/, '')}억`;
@@ -2331,14 +2556,16 @@ async function loadApproved() {
 }
 
 async function loadData(isRefresh) {
-  const [latestF, historyF, active, appr, uo, fineText] = await Promise.all([
+  const [latestF, historyF, active, appr, uo, fineText, promoText] = await Promise.all([
     fetchRepoFile('data/latest.json'),
     fetchRepoFile('data/history.json'),
     loadActiveProducts(),
     loadApproved(),
     loadUnitOverride(),
     fetchRepoFile('data/history_fine.json').then((f) => f.text).catch(() => ''),
+    fetchRepoFile('data/promos.json').then((f) => f.text).catch(() => ''),
   ]);
+  try { promosData = promoText ? JSON.parse(promoText) || {} : {}; } catch (e) { promosData = {}; }
   unitOverride = uo;
   if (!saving) approved = appr;
   const latest = JSON.parse(latestF.text);
@@ -2375,7 +2602,7 @@ async function loadData(isRefresh) {
 
   items = Object.entries(latest).map(([key, it]) => Object.assign({ key }, it));
   // products.txt 에서 '스토어=이름' 으로 정한 링크는 그 스토어로 합쳐서 보여줌 (원본 데이터는 그대로)
-  items.forEach((it) => { const a = storeAlias[String(it.product)]; if (a) { it.origStore = it.store; it.store = a; } });
+  items.forEach((it) => { it.store = String(it.store || '').trim(); const a = storeAlias[String(it.product)]; if (a) { it.origStore = it.store; it.store = a; } });
   // 옵션이 없는 상품은 옵션명이 '기본'으로 들어오므로 상품명으로 바꿔서 보여줌
   items.forEach((it) => {
     if (!it.optionName || ['기본', '기본옵션', 'default'].includes(String(it.optionName).trim())) {
