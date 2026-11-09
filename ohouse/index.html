@@ -978,12 +978,27 @@ let productColors = {};
 // 스토어마다 색 계열 하나, 같은 스토어 안에서 상품(링크)이 다르면 진하기를 다르게
 const HUES = [217, 30, 145, 271, 330, 180, 0, 90, 50, 250];
 const SHADES = [95, 88, 81, 91, 84];
+// 눈에 띄게 고정색을 쓰는 스토어 (이름에 들어 있으면 적용, 띄어쓰기·'주식회사' 무시)
+const STRONG_STORES = [
+  { match: '새로고침', accent: '#e60012', bg: '#ffe1e1', chipFg: '#fff', chipBorder: '#8b0000' }, // 새빨간색
+  { match: '오늘까세', accent: '#ff6a00', bg: '#ffe8d6', chipFg: '#fff', chipBorder: '#b34700' }, // 강한 주황색
+];
+const strongOf = (st) => { const n = String(st || '').replace(/\s+/g, '').replace(/주식회사/g, ''); return STRONG_STORES.find((x) => n.includes(x.match)) || null; };
 function buildColors(list) {
   const stores = [...new Set(list.map((it) => it.store))].sort();
   storeColors = {};
   productColors = {};
-  stores.forEach((st, i) => {
-    const h = HUES[i % HUES.length];
+  // 다른 스토어는 빨강, 주황 계열을 피해서 색을 나눔
+  const hues = HUES.filter((h) => h !== 0 && h !== 30);
+  let hi = 0;
+  stores.forEach((st) => {
+    const sg = strongOf(st);
+    if (sg) {
+      storeColors[st] = { bg: sg.bg, accent: sg.accent, chipBg: sg.accent, chipFg: sg.chipFg, chipBorder: sg.chipBorder };
+      [...new Set(list.filter((it) => it.store === st).map((it) => String(it.product)))].forEach((p) => { productColors[p] = storeColors[st]; });
+      return;
+    }
+    const h = hues[hi++ % hues.length];
     storeColors[st] = { bg: `hsl(${h},70%,93%)`, accent: `hsl(${h},65%,48%)` };
     const prods = [...new Set(list.filter((it) => it.store === st).sort((a, b) => a.site - b.site).map((it) => String(it.product)))];
     prods.forEach((p, j) => {
@@ -1038,7 +1053,7 @@ function renderLegend() {
         const c = storeColors[st];
         const t = fmtSums(sumsWhere(selectedDay, (it) => it.store === st && catOf(it) === cat));
         const on = activeStore === st && activeCat === cat;
-        return `<span class="chip${on ? ' active' : ''}" data-store="${esc(st)}" data-cat="${esc(cat)}" style="background:${c.bg};border-color:${c.accent}">${storeFlags(selectedDay, st, cat)}${esc(st)} (${label} ${t})</span>`;
+        return `<span class="chip${on ? ' active' : ''}" data-store="${esc(st)}" data-cat="${esc(cat)}" style="background:${c.chipBg || c.bg};border-color:${c.chipBorder || c.accent}${c.chipFg ? `;color:${c.chipFg}` : ''}">${storeFlags(selectedDay, st, cat)}${esc(st)} (${label} ${t})</span>`;
       }).join('') || '<span class="small">products.txt의 이 분류 제목 아래에 링크를 넣어주세요</span>'}</div>
     </div>`;
   });
