@@ -473,7 +473,7 @@ function setModeLabel() {
   if (!el) return;
   const mode = editMode();
   let txt;
-  if (mode === 'bridge') txt = '관리용 컴퓨터 · 편집 가능 · <a href="#" id="copyTok">다른 컴퓨터 연결 코드 복사</a>';
+  if (mode === 'bridge') txt = '관리용 컴퓨터 · 편집 가능 · <a href="#" id="copyTok">다른 컴퓨터 연결 코드 복사</a> · <a href="#" id="testNoti">휴대폰 알림 테스트</a>';
   else if (mode === 'token') txt = '이 컴퓨터 편집 가능 · <a href="#" id="editOff">편집 끄기</a>';
   else txt = '보기 전용 · <a href="#" id="editOn">이 컴퓨터에서도 편집 켜기</a>';
   el.innerHTML = txt + (saving ? ' · 저장중...' : '');
@@ -485,6 +485,8 @@ function setModeLabel() {
     const ok = await copyText(ghToken);
     alert(ok ? '연결 코드를 복사했어요.\n다른 컴퓨터 대시보드에서 단위 저장(또는 편집 켜기)을 누르면 나오는 칸에 붙여넣으면 돼요.\n메신저로 보냈다면 옮긴 뒤 그 메시지는 지워주세요.' : '복사 실패. 다시 눌러주세요.');
   });
+  const tn = document.getElementById('testNoti');
+  if (tn) tn.addEventListener('click', (e) => { e.preventDefault(); sendToTracker({ type: 'testNotify' }); });
   const on = document.getElementById('editOn');
   if (on) on.addEventListener('click', (e) => { e.preventDefault(); enableEditing(); });
   const off = document.getElementById('editOff');
@@ -496,6 +498,7 @@ window.addEventListener('message', (ev) => {
   if (!m || m.from !== 'cs-tracker') return;
   if (m.type === 'pong') showLoginBlock(m);
   if (m.type === 'loginBlockCleared') showLoginBlock({});
+  if (m.type === 'notifyResult') alert(m.ok ? '휴대폰으로 테스트 알림을 보냈어요. ntfy 앱에 왔는지 확인해 주세요.' : (m.hasTopic ? '알림 보내기 실패. 인터넷 연결이나 알림 주소 이름을 확인해 주세요.' : '탬퍼몽키 스크립트에 알림 주소 이름(NTFY_TOPIC)이 비어 있어요.'));
   if (m.type === 'pong' && !bridgeOk) {
     bridgeOk = true;
     // 관리용 컴퓨터는 탬퍼몽키의 토큰으로 읽기도 해서 항상 최신 데이터를 봄 (메모리에만 두고 저장 안 함)

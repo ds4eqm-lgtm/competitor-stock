@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         스마트스토어 판매량 추적기
 // @namespace    competitor-stock-tracker
-// @version      5.1
+// @version      5.2
 // @description  상품페이지가 스스로 불러오는 옵션별 재고 데이터를 읽어서 옵션 단위로 판매추정을 깃허브에 자동 기록
 // @match        https://smartstore.naver.com/*/products/*
 // @match        https://brand.naver.com/*/products/*
@@ -14,15 +14,16 @@
 // @grant        GM_listValues
 // @grant        GM_deleteValue
 // @connect      api.github.com
+// @connect      ntfy.sh
 // @run-at       document-start
 // ==/UserScript==
-
 (function () {
   'use strict';
-  // ---------------- 여기 세줄만 본인 값으로 바꾸기 ----------------
+  // ---------------- 여기 값만 본인 값으로 바꾸기 (23번째 줄 토큰, 26번째 줄 휴대폰 알림 이름) ----------------
   const GITHUB_TOKEN = "";
   const GITHUB_OWNER = "ds4eqm-lgtm";
   const GITHUB_REPO = "competitor-stock";
+  const NTFY_TOPIC = ""; // 휴대폰 알림 주소 이름 (ntfy 앱에서 구독한 이름, 비워두면 알림 안 보냄)
   // ---------------------------------------------------------------
 
   const DAY_START_HOUR = 7;  // 하루 시작 (07:00 ~ 다음날 07:00)
@@ -34,9 +35,30 @@
   // 자동조회 탭(#autotrack)이 로그인 화면으로 넘어가면: 바로 닫고, 1시간 동안 네이버 자동조회 탭을 전부 열자마자 닫음
   // (로그인 창이 수십 개 쌓이는 것 방지). 직접 연 로그인 화면은 아무것도 안 함
   const LOGIN_PAUSE_MS = 60 * 60000;
+  // 휴대폰 알림 (ntfy 앱, 무료). 성공하면 true
+  function notifyPhone(title, message) {
+    return new Promise((resolve) => {
+      if (!NTFY_TOPIC) { resolve(false); return; }
+      try {
+        GM_xmlhttpRequest({
+          method: 'POST',
+          url: 'https://ntfy.sh/',
+          headers: { 'Content-Type': 'application/json' },
+          data: JSON.stringify({ topic: NTFY_TOPIC, title, message, priority: 5, tags: ['warning'] }),
+          timeout: 8000,
+          onload: (r) => resolve(r.status >= 200 && r.status < 300),
+          onerror: () => resolve(false),
+          ontimeout: () => resolve(false),
+        });
+      } catch (e) { resolve(false); }
+    });
+  }
   if (window.location.hostname === 'nid.naver.com') {
     const h = window.location.hash;
     if (h === '#autotrack' || h === '#autotrack-fine') {
+      // 처음 막힌 순간에만 휴대폰 알림 (쉬는 1시간 동안은 다시 안 보냄)
+      let already = false;
+      try { already = (GM_getValue('login_block_until', 0) || 0) > Date.now(); } catch (e) { /* 무시 */ }
       try {
         GM_setValue('login_block_until', Date.now() + LOGIN_PAUSE_MS);
         GM_setValue('login_block_at', Date.now());
@@ -44,7 +66,12 @@
       } catch (e) { /* 무시 */ }
       console.log('[판매량추적] 네이버 로그인 화면으로 넘어감, 1시간 자동조회 쉼');
       try { window.stop(); } catch (e) { /* 무시 */ }
-      setTimeout(() => window.close(), 300);
+      if (already) { setTimeout(() => window.close(), 300); return; }
+      const d = new Date();
+      const hm = `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+      const done = () => setTimeout(() => window.close(), 300);
+      setTimeout(done, 9000); // 알림이 늦어도 9초 뒤에는 닫음
+      notifyPhone('네이버 로그인 풀림', `${hm} 네이버가 자동조회를 로그인 화면으로 보냈어요. 수집 PC 크롬에서 네이버 로그인(로그인 상태 유지) 후 대시보드에서 쉬기 풀기를 눌러주세요. 그전까지 1시간마다 다시 시도해요.`).then(done);
     }
     return;
   }
@@ -762,6 +789,11 @@
         let lb = 0, lu = 0;
         try { lb = GM_getValue('login_block_at', 0) || 0; lu = GM_getValue('login_block_until', 0) || 0; } catch (e) { /* 무시 */ }
         reply({ type: 'pong', token: GITHUB_TOKEN, loginBlockAt: lb, loginBlockUntil: lu });
+        return;
+      }
+      if (m.type === 'testNotify') {
+        const ok = await notifyPhone('알림 테스트', '판매량 추적 수집 PC에서 보낸 테스트 알림이에요. 이게 보이면 로그인 풀림 알림도 이렇게 와요.');
+        reply({ type: 'notifyResult', ok, hasTopic: !!NTFY_TOPIC });
         return;
       }
       if (m.type === 'clearLoginBlock') {
