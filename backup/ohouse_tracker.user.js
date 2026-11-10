@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         오늘의집 판매량 추적기
 // @namespace    ohouse-stock-tracker
-// @version      1.5
+// @version      1.6
 // @description  오늘의집 상품 옵션별 재고를 매시간 읽어서 판매추정을 깃허브 ohouse 폴더에 기록 (네이버용 추적기와 따로 동작)
 // @match        https://store.ohou.se/*
 // @match        https://ds4eqm-lgtm.github.io/competitor-stock/ohouse/*
@@ -29,7 +29,7 @@
   const DAY_START_HOUR = 7;
   const SPLIT_HOUR = 16;
   const LONG_GAP_HOURS = 16;
-  const HISTORY_KEEP_DAYS = 14;
+  const HISTORY_KEEP_DAYS = 15; // 지난 기록은 바뀐 시각만 ohouse/data/archive 에 영구 보관
   const REQ_GAP_MS = 1500;   // 상품 하나 읽고 다음 상품까지 쉬는 시간 (+0~1초 랜덤)
   const FINE_STORES = ['도든']; // 10분 조회할 브랜드 (오늘의집 브랜드명 그대로, 여러 개면 ['도든', '룸스토어'])
 
@@ -229,6 +229,39 @@
     throw new Error(`PUT ${path} 재시도 초과 (${lastError})`);
   }
 
+
+  // ---------------- 15일 지난 시간별 기록 보관 (재고가 바뀐 시각만, 월별 파일 data/archive/YYYY-MM.json, 영구) ----------------
+  // pruned = { 옵션키: { 시각: 재고 } } 지우기 직전에 바뀐 것만 모은 것
+  function collectPruned(rec, cutoffStr, key, pruned) {
+    let prevV;
+    Object.keys(rec).sort().forEach((t) => {
+      if (t >= cutoffStr) return;
+      if (prevV === undefined || rec[t] !== prevV) (pruned[key] = pruned[key] || {})[t] = rec[t];
+      prevV = rec[t];
+      delete rec[t];
+    });
+  }
+  async function saveArchive(pruned, label) {
+    const byMonth = {};
+    Object.entries(pruned).forEach(([key, r]) => Object.entries(r).forEach(([t, v]) => {
+      ((byMonth[t.slice(0, 7)] = byMonth[t.slice(0, 7)] || {})[key] = byMonth[t.slice(0, 7)][key] || {})[t] = v;
+    }));
+    for (const m of Object.keys(byMonth).sort()) {
+      await updateJsonFile(`${DIR}data/archive/${m}.json`, (arc) => {
+        Object.entries(byMonth[m]).forEach(([key, r]) => {
+          const a = arc[key] || {};
+          Object.keys(r).sort().forEach((t) => {
+            const before = Object.keys(a).filter((x) => x < t).sort().pop();
+            if (before && a[before] === r[t]) return; // 이미 같은 재고로 남아 있으면 생략
+            a[t] = r[t];
+          });
+          arc[key] = a;
+        });
+        return arc;
+      }, `지난 시간별 기록 보관 ${m} ${label}`);
+    }
+  }
+
   // entry = { channelId, productNo, storeName, productName, nowKey, today, options: [{id, name, stock, price}] }
   async function uploadEntries(entries, couponInfo) {
     if (!entries.length) return;
@@ -241,6 +274,7 @@
     const keyOf = (en, opt) => `${en.channelId}_${en.productNo}_${opt.id}`;
     const label = `${entries.length}개 상품`;
     const stamp = entries[entries.length - 1].nowKey;
+    let pruned = {};
 
     await updateJsonFile(`${DIR}data/history.json`, (history) => {
       entries.forEach((en) => en.options.forEach((opt) => {
@@ -252,10 +286,11 @@
       const flags = detectSuspicious(history);
       const keys = new Set();
       entries.forEach((en) => en.options.forEach((opt) => keys.add(keyOf(en, opt))));
+      pruned = {};
       keys.forEach((key) => {
         const rec = history[key];
         dailyMap[key] = computeFinishedDays(rec, now, flags[key] || {}, key);
-        Object.keys(rec).forEach((t) => { if (t < cutoffStr) delete rec[t]; });
+        collectPruned(rec, cutoffStr, key, pruned);
       });
       return history;
     }, `오늘의집 판매량 업데이트 ${label} ${stamp}`);
@@ -301,6 +336,10 @@
       }));
       return latest;
     }, `오늘의집 판매량 업데이트 ${label} ${stamp.slice(0, 10)}`);
+
+    if (Object.keys(pruned).length) {
+      try { await saveArchive(pruned, label); } catch (e) { console.log('[오늘의집추적] 지난 기록 보관 실패', e); }
+    }
 
     // 쿠폰 기록 (영구 보관, 지우지 않음): ohouse/data/promos.json
     // coupons { 쿠폰번호: { t 이름, r 할인율, max 최대할인, min 최소주문, dt 할인방식, end 종료시각(한국시간), first 처음 본 시각, last 마지막 본 시각, stores {스토어:1}, pids {상품번호:1} } }
@@ -623,20 +662,25 @@
         const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - HISTORY_KEEP_DAYS);
         const cutoffStr = ymd(cutoff);
         say(`${entries.length}개 결과 올리는 중...`);
+        let prunedF = {};
         await updateJsonFile(`${DIR}data/history_fine.json`, (fine) => {
+          prunedF = {};
           entries.forEach((en) => en.options.forEach((opt) => {
             const key = `${en.channelId}_${en.productNo}_${opt.id}`;
             const rec = fine[key] || {};
             const ts = Object.keys(rec).sort();
             const prev = ts.length ? rec[ts[ts.length - 1]] : null;
             if (prev !== opt.stock) rec[en.nowKey] = opt.stock; // 바뀐 때만 기록
-            Object.keys(rec).forEach((t) => { if (t < cutoffStr) delete rec[t]; });
+            collectPruned(rec, cutoffStr, key, prunedF);
             fine[key] = rec;
           }));
           // 마지막으로 10분 조회한 시각 (재고가 안 바뀌어도 대시보드에 최근 확인 시각을 보여주려고)
           fine._meta = { last: entries[entries.length - 1].nowKey, store: FINE_STORES.join(', ') };
           return fine;
         }, `오늘의집 10분 조회 ${FINE_STORES.join(', ')} ${entries[entries.length - 1].nowKey}`);
+        if (Object.keys(prunedF).length) {
+          try { await saveArchive(prunedF, '10분 조회'); } catch (e) { console.log('[오늘의집 10분] 지난 기록 보관 실패', e); }
+        }
         keys.forEach((k) => GM_deleteValue(k));
         say(`${pids.length}개 링크 업로드 완료${fail ? `\n못 읽은 링크 ${fail}개` : ''}`);
       }

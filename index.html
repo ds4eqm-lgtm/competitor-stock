@@ -1142,11 +1142,56 @@ function lastRecord(key) {
   return ts ? { t: ts, v: rec[ts] } : null;
 }
 
+// ---------------- 15일 지난 시간별 기록 (재고가 바뀐 시각만, data/archive/YYYY-MM.json) ----------------
+// 화면에 보여줄 때만 불러옴 (판매량 계산에는 안 씀)
+const KEEP_DAYS = 15;
+const archiveData = {};   // { 'YYYY-MM': { 옵션키: { 시각: 재고 } } }
+const archiveState = {};  // { 'YYYY-MM': 'loading' | 'done' }
+const fullRecCache = {};
+const keepCutoff = () => { const d = new Date(); d.setDate(d.getDate() - KEEP_DAYS); return ymd(d); };
+function monthsBetween(a, b) {
+  const out = [];
+  let y = Number(a.slice(0, 4)), m = Number(a.slice(5, 7));
+  const ey = Number(b.slice(0, 4)), em = Number(b.slice(5, 7));
+  while (y < ey || (y === ey && m <= em)) { out.push(`${y}-${String(m).padStart(2, '0')}`); m++; if (m > 12) { m = 1; y++; } }
+  return out;
+}
+function ensureArchive(months) {
+  const need = months.filter((m) => !archiveState[m]);
+  if (!need.length) return months.every((m) => archiveState[m] === 'done');
+  need.forEach((m) => {
+    archiveState[m] = 'loading';
+    fetchRepoFile(`data/archive/${m}.json`).then((f) => { try { archiveData[m] = JSON.parse(f.text || '{}'); } catch (e) { archiveData[m] = {}; } })
+      .catch(() => { archiveData[m] = {}; })
+      .then(() => { archiveState[m] = 'done'; Object.keys(fullRecCache).forEach((k) => delete fullRecCache[k]); renderAll(); });
+  });
+  return false;
+}
+// 보관 기록 + 최근 15일 기록을 합친 것 (보여주기용)
+function fullRec(key) {
+  if (fullRecCache[key]) return fullRecCache[key];
+  const out = {};
+  Object.keys(archiveData).sort().forEach((m) => Object.assign(out, (archiveData[m] || {})[key] || {}));
+  Object.assign(out, historyData[key] || {});
+  return (fullRecCache[key] = out);
+}
+
 function recordsHtml(key, day, all) {
   const fl = flagsAll[key] || {};
-  const rec = historyData[key] || {};
-  const entries = Object.keys(rec).sort().map((t) => ({ t, dt: toDate(t), v: rec[t] }));
-  if (!entries.length) return '<div class="small">시간별 기록 없음 (14일 지난 기록은 일별 합계만 남아 있음)</div>';
+  const cut = keepCutoff();
+  const firstMonth = '2026-09';
+  const thisMonth = ymd(new Date()).slice(0, 7);
+  let loading = false;
+  if (all) loading = !ensureArchive(monthsBetween(firstMonth, thisMonth));
+  else {
+    const { start, end } = workPeriod(day);
+    const from = new Date(start); from.setDate(from.getDate() - 3); // 기준 재고(직전 기록)까지
+    if (ymd(from) < cut) loading = !ensureArchive(monthsBetween(ymd(from).slice(0, 7), ymd(end).slice(0, 7)));
+  }
+  const rec = fullRec(key);
+  const entries = Object.keys(rec).sort().map((t) => ({ t, dt: toDate(t), v: rec[t], arc: t < cut && !(historyData[key] || {})[t] }));
+  if (loading) return '<div class="small">지난 기록 불러오는 중...</div>';
+  if (!entries.length) return '<div class="small">시간별 기록 없음</div>';
 
   let list;
   if (all) {
@@ -1159,15 +1204,22 @@ function recordsHtml(key, day, all) {
     // 16시 마감 기록은 2타임 마지막 조회라 그대로 넣고, 16시 기록이 없을 때만 그 다음 기록을 '다음 기록'으로 붙임
     if (list.length && next) list.push(next.dt.getTime() === end.getTime() ? next : Object.assign({ nextDay: true }, next));
   }
-  if (!list.length) return '<div class="small">이 날 기록 없음</div>';
+  if (!list.length) {
+    if (!all && ymd(workPeriod(day).start) < cut) {
+      const before = entries.filter((e) => e.dt < workPeriod(day).start).pop();
+      return `<div class="small">이 날은 재고가 안 바뀌었어요${before ? ` (${fmtDT(before.dt)} 이후 계속 ${before.v.toLocaleString()}개)` : ''}. ${KEEP_DAYS}일 지난 기록은 바뀐 시각만 남아 있어요.</div>`;
+    }
+    return '<div class="small">이 날 기록 없음</div>';
+  }
 
-  let html = '<div class="recs">';
+  const arcNote = list.some((e) => e.arc) ? `<div class="small" style="margin:4px 0;color:#92400e">${KEEP_DAYS}일 지난 기록은 재고가 바뀐 시각만 남아 있어요 (변화없음 시간은 빠짐)</div>` : '';
+  let html = arcNote + '<div class="recs">';
   let lastDay = '';
   let prev = null;
   if (all) {
     list.forEach((e) => {
       const bd = bizDayOf(e.dt);
-      if (bd !== lastDay) { html += `<div class="dayhdr">${bd} 영업일</div>`; lastDay = bd; }
+      if (bd !== lastDay) { html += `<div class="dayhdr">${bd} 영업일${e.arc ? ' <span class="small">(바뀐 시각만)</span>' : ''}</div>`; lastDay = bd; }
       html += recLine(e, prev, fl, key);
       prev = e;
     });
@@ -1460,7 +1512,7 @@ function renderTable() {
       html += `<tr class="detail"><td colspan="9">
         <div class="detail-head">
           <b>${esc(r.optionName)}</b>
-          <button data-toggle-all="${esc(r.it.key)}">${all ? '이 날 기록만 보기' : '전체 기록 보기 (최근 14일)'}</button>
+          <button data-toggle-all="${esc(r.it.key)}">${all ? '이 날 기록만 보기' : '전체 기록 보기 (최근 15일 + 이전은 바뀐 시각만)'}</button>
         </div>
         ${unitEditorHtml(r.it)}
         ${riseHtml(r.v)}
@@ -1754,7 +1806,7 @@ function renderHeatmap(days, fn, storeWon) {
     html += `<tr><td class="hr-n" title="기간 판매 ${fmtNum(r.total + r.unk)}${r.unit} = 시간 확인 ${fmtNum(r.total)}${r.unit} + 시간 모름 ${fmtNum(r.unk)}${r.unit}">${idx + 1}. ${esc(nameOf(k))}<div class="hr-s">매출 ${fmtWonShort((storeWon[k] && storeWon[k].won) || 0)} · 합계 ${fmtNum(r.total + r.unk)}${r.unit}</div>${r.unk ? `<div class="hr-s">시간 모름 ${fmtNum(r.unk)}${r.unit}</div>` : ''}</td>${topCell(top[0], r, true)}${topCell(top[1], r)}${topCell(top[2], r)}<td class="hr-c hr-w"><div class="hr-h">${best}~${(best + 3) % 24}시</div><div class="hr-bar"><span style="width:${wPct}%"></span></div><div class="hr-s">${wPct}%</div></td></tr>`;
   });
   html += '</table>';
-  html += `<div class="small" style="margin-top:4px">기간은 위 매출 계산기와 같은 근무일 기준이라 합계가 같아요 (${fmtDT(start)} ~ ${fmtDT(end)}). 퍼센트는 시간을 아는 판매 중 비중이에요.${skipped ? ` 기록이 90분 넘게 비어 언제 팔렸는지 모르는 판매는 시간 모름으로 따로 적었어요 (컴퓨터 꺼짐 등).` : ''} 시간별 기록은 최근 14일치만 남아 있어요.</div>`;
+  html += `<div class="small" style="margin-top:4px">기간은 위 매출 계산기와 같은 근무일 기준이라 합계가 같아요 (${fmtDT(start)} ~ ${fmtDT(end)}). 퍼센트는 시간을 아는 판매 중 비중이에요.${skipped ? ` 기록이 90분 넘게 비어 언제 팔렸는지 모르는 판매는 시간 모름으로 따로 적었어요 (컴퓨터 꺼짐 등).` : ''} 시간별 기록은 최근 15일치로 계산해요.</div>`;
   out.innerHTML = html;
 }
 

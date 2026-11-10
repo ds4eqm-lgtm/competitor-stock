@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         스마트스토어 판매량 추적기
 // @namespace    competitor-stock-tracker
-// @version      5.0
+// @version      5.1
 // @description  상품페이지가 스스로 불러오는 옵션별 재고 데이터를 읽어서 옵션 단위로 판매추정을 깃허브에 자동 기록
 // @match        https://smartstore.naver.com/*/products/*
 // @match        https://brand.naver.com/*/products/*
@@ -28,7 +28,7 @@
   const DAY_START_HOUR = 7;  // 하루 시작 (07:00 ~ 다음날 07:00)
   const SPLIT_HOUR = 16;     // 감소가 시작된 기록이 07~15시면 2타임(오후물량, 08~16시 조회), 16시~다음날 06시면 1타임(아침물량, 17~07시 조회)
   const LONG_GAP_HOURS = 16; // 기록 사이가 이보다 길게 비면 기간불명으로 따로 표시
-  const HISTORY_KEEP_DAYS = 14; // 시간별 기록 보관 기간 (일별 판매량은 latest.json에 영구 보관)
+  const HISTORY_KEEP_DAYS = 15; // 시간별 기록 보관 기간 (지난 기록은 바뀐 시각만 data/archive 에 영구 보관, 일별 판매량은 latest.json에 영구 보관)
 
   // ---------------- 네이버가 로그인 화면으로 보냈을 때 ----------------
   // 자동조회 탭(#autotrack)이 로그인 화면으로 넘어가면: 바로 닫고, 1시간 동안 네이버 자동조회 탭을 전부 열자마자 닫음
@@ -454,6 +454,39 @@
   }
 
   // ---------------- 메인 처리 ----------------
+
+  // ---------------- 15일 지난 시간별 기록 보관 (재고가 바뀐 시각만, 월별 파일 data/archive/YYYY-MM.json, 영구) ----------------
+  // pruned = { 옵션키: { 시각: 재고 } } 지우기 직전에 바뀐 것만 모은 것
+  function collectPruned(rec, cutoffStr, key, pruned) {
+    let prevV;
+    Object.keys(rec).sort().forEach((t) => {
+      if (t >= cutoffStr) return;
+      if (prevV === undefined || rec[t] !== prevV) (pruned[key] = pruned[key] || {})[t] = rec[t];
+      prevV = rec[t];
+      delete rec[t];
+    });
+  }
+  async function saveArchive(pruned, label) {
+    const byMonth = {};
+    Object.entries(pruned).forEach(([key, r]) => Object.entries(r).forEach(([t, v]) => {
+      ((byMonth[t.slice(0, 7)] = byMonth[t.slice(0, 7)] || {})[key] = byMonth[t.slice(0, 7)][key] || {})[t] = v;
+    }));
+    for (const m of Object.keys(byMonth).sort()) {
+      await updateJsonFile(`data/archive/${m}.json`, (arc) => {
+        Object.entries(byMonth[m]).forEach(([key, r]) => {
+          const a = arc[key] || {};
+          Object.keys(r).sort().forEach((t) => {
+            const before = Object.keys(a).filter((x) => x < t).sort().pop();
+            if (before && a[before] === r[t]) return; // 이미 같은 재고로 남아 있으면 생략
+            a[t] = r[t];
+          });
+          arc[key] = a;
+        });
+        return arc;
+      }, `지난 시간별 기록 보관 ${m} ${label}`);
+    }
+  }
+
   // ---------------- 여러 상품을 한 번에 깃허브에 올리기 ----------------
   // entry = { channelId, productNo, storeName, productName, nowKey, today, options: [{id, name, stock}] }
   async function uploadEntries(entries) {
@@ -466,6 +499,7 @@
     const keyOf = (en, opt) => `${en.channelId}_${en.productNo}_${opt.id}`;
     const label = entries.length === 1 ? entries[0].storeName : `${entries.length}개 상품`;
     const stamp = entries[0].nowKey;
+    let pruned = {};
 
     await updateJsonFile(
       'data/history.json',
@@ -481,11 +515,12 @@
         // 밀린 결과가 많으면 같은 옵션이 여러 시간치 들어오므로 옵션마다 한 번만 계산 (화면 멈춤 방지)
         const keys = new Set();
         entries.forEach((en) => en.options.forEach((opt) => keys.add(keyOf(en, opt))));
+        pruned = {}; // 저장 재시도 때마다 새로 모음
         keys.forEach((key) => {
           const rec = history[key];
           // 오래된 기록을 지우기 전에 일별 판매량부터 계산해 둠
           dailyMap[key] = computeFinishedDays(rec, now, flags[key] || {}, key);
-          Object.keys(rec).forEach((t) => { if (t < cutoffStr) delete rec[t]; });
+          collectPruned(rec, cutoffStr, key, pruned);
         });
         return history;
       },
@@ -527,6 +562,10 @@
       },
       `판매량 업데이트 ${label} ${stamp.slice(0, 10)}`
     );
+    // 지운 기록 중 바뀐 것만 월별 보관 파일에 (실패해도 판매량 업로드에는 영향 없음)
+    if (Object.keys(pruned).length) {
+      try { await saveArchive(pruned, label); } catch (e) { console.log('[판매량추적] 지난 기록 보관 실패', e); }
+    }
   }
 
   // ---------------- 상품 페이지 처리 ----------------
@@ -676,20 +715,25 @@
     const cutoffStr = ymd(cutoff);
     try {
       say(`${entries.length}개 상품 올리는 중...`);
+      let prunedF = {};
       await updateJsonFile('data/history_fine.json', (fine) => {
+        prunedF = {};
         entries.forEach((en) => en.options.forEach((opt) => {
           const key = `${en.channelId}_${en.productNo}_${opt.id}`;
           const rec = fine[key] || {};
           const ts = Object.keys(rec).sort();
           const prev = ts.length ? rec[ts[ts.length - 1]] : null;
           if (prev !== opt.stock) rec[en.nowKey] = opt.stock; // 바뀐 때만 기록
-          Object.keys(rec).forEach((t) => { if (t < cutoffStr) delete rec[t]; });
+          collectPruned(rec, cutoffStr, key, prunedF);
           fine[key] = rec;
         }));
         // 마지막으로 10분 조회한 시각 (재고가 안 바뀌어도 대시보드에 최근 확인 시각을 보여주려고)
         fine._meta = { last: entries[entries.length - 1].nowKey, store: entries[0].storeName };
         return fine;
       }, `10분 조회 ${entries[0].storeName} ${entries[entries.length - 1].nowKey}`);
+      if (Object.keys(prunedF).length) {
+        try { await saveArchive(prunedF, '10분 조회'); } catch (e) { console.log('[판매량추적] 지난 10분 기록 보관 실패', e); }
+      }
       keys.forEach((k) => GM_deleteValue(k));
       say(`${entries.length}개 상품 업로드 완료`);
     } catch (e) {
