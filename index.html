@@ -439,6 +439,27 @@ async function checkTokenHealth(token) {
   el.textContent = msg;
 }
 
+// 네이버가 자동조회 탭을 로그인 화면으로 보낸 적이 있으면 (수집 PC 대시보드에서만 보임) 빨간 안내
+function showLoginBlock(m) {
+  let el = document.getElementById('loginWarn');
+  const at = Number(m.loginBlockAt) || 0;
+  if (!at || Date.now() - at > 24 * 3600000) { if (el) el.remove(); return; }
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'loginWarn';
+    el.style.cssText = 'padding:12px 16px;font-weight:700;font-size:15px;color:#fff;background:#b91c1c;line-height:1.6';
+    document.body.insertBefore(el, document.body.firstChild);
+  }
+  const d = new Date(at);
+  const t = `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  const until = Number(m.loginBlockUntil) || 0;
+  const u = new Date(until);
+  const ut = `${String(u.getHours()).padStart(2, '0')}:${String(u.getMinutes()).padStart(2, '0')}`;
+  el.innerHTML = `${t}에 네이버가 자동조회 탭을 로그인 화면으로 보냈어요. ${until > Date.now() ? `${ut}까지 네이버 자동조회를 쉬어요.` : '쉬는 시간은 끝났어요.'}<br>이 크롬에서 네이버 로그인(로그인 상태 유지 체크)을 한 다음 옆 버튼을 누르면 다음 정시 조회부터 다시 돌아요. <button id="loginWarnBtn" style="margin-left:8px;padding:4px 10px;font-weight:700;border:0;border-radius:6px;cursor:pointer">로그인 했어요, 쉬기 풀기</button>`;
+  const b = document.getElementById('loginWarnBtn');
+  if (b) b.onclick = () => sendToTracker({ type: 'clearLoginBlock' });
+}
+
 // 탬퍼몽키가 깃허브에 올릴 때도 같은 기준(박스 또는 m)으로 이상재고를 판단하도록 상품별 환산값을 넘겨줌
 function sendUnitsToTracker() {
   const map = {};
@@ -473,6 +494,8 @@ function setModeLabel() {
 window.addEventListener('message', (ev) => {
   const m = ev.data;
   if (!m || m.from !== 'cs-tracker') return;
+  if (m.type === 'pong') showLoginBlock(m);
+  if (m.type === 'loginBlockCleared') showLoginBlock({});
   if (m.type === 'pong' && !bridgeOk) {
     bridgeOk = true;
     // 관리용 컴퓨터는 탬퍼몽키의 토큰으로 읽기도 해서 항상 최신 데이터를 봄 (메모리에만 두고 저장 안 함)

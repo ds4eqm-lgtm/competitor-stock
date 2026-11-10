@@ -1,10 +1,11 @@
 // ==UserScript==
 // @name         스마트스토어 판매량 추적기
 // @namespace    competitor-stock-tracker
-// @version      4.9
+// @version      5.0
 // @description  상품페이지가 스스로 불러오는 옵션별 재고 데이터를 읽어서 옵션 단위로 판매추정을 깃허브에 자동 기록
 // @match        https://smartstore.naver.com/*/products/*
 // @match        https://brand.naver.com/*/products/*
+// @match        https://nid.naver.com/*
 // @match        https://ds4eqm-lgtm.github.io/competitor-stock/*
 // @grant        GM_xmlhttpRequest
 // @grant        window.close
@@ -18,7 +19,6 @@
 
 (function () {
   'use strict';
-
   // ---------------- 여기 세줄만 본인 값으로 바꾸기 ----------------
   const GITHUB_TOKEN = "";
   const GITHUB_OWNER = "ds4eqm-lgtm";
@@ -29,6 +29,25 @@
   const SPLIT_HOUR = 16;     // 감소가 시작된 기록이 07~15시면 2타임(오후물량, 08~16시 조회), 16시~다음날 06시면 1타임(아침물량, 17~07시 조회)
   const LONG_GAP_HOURS = 16; // 기록 사이가 이보다 길게 비면 기간불명으로 따로 표시
   const HISTORY_KEEP_DAYS = 14; // 시간별 기록 보관 기간 (일별 판매량은 latest.json에 영구 보관)
+
+  // ---------------- 네이버가 로그인 화면으로 보냈을 때 ----------------
+  // 자동조회 탭(#autotrack)이 로그인 화면으로 넘어가면: 바로 닫고, 1시간 동안 네이버 자동조회 탭을 전부 열자마자 닫음
+  // (로그인 창이 수십 개 쌓이는 것 방지). 직접 연 로그인 화면은 아무것도 안 함
+  const LOGIN_PAUSE_MS = 60 * 60000;
+  if (window.location.hostname === 'nid.naver.com') {
+    const h = window.location.hash;
+    if (h === '#autotrack' || h === '#autotrack-fine') {
+      try {
+        GM_setValue('login_block_until', Date.now() + LOGIN_PAUSE_MS);
+        GM_setValue('login_block_at', Date.now());
+        GM_setValue('login_block_count', (GM_getValue('login_block_count', 0) || 0) + 1);
+      } catch (e) { /* 무시 */ }
+      console.log('[판매량추적] 네이버 로그인 화면으로 넘어감, 1시간 자동조회 쉼');
+      try { window.stop(); } catch (e) { /* 무시 */ }
+      setTimeout(() => window.close(), 300);
+    }
+    return;
+  }
 
   // 대시보드 페이지에서는 '판매로 인정' 저장만 대신 해줌 (이 스크립트가 깔린 컴퓨터만 인정 가능)
   const isDashboard = window.location.hostname === `${GITHUB_OWNER}.github.io`;
@@ -106,6 +125,18 @@
         console.log('[판매량추적] 스마트스토어 연속 실패, 30분 동안 스마트스토어 자동조회 쉼');
       }
     } catch (e) { /* 무시 */ }
+  }
+  // 로그인 요구로 쉬는 중이면 스마트스토어, 브랜드스토어, 10분 조회 탭 전부 열자마자 닫음
+  if (autoMode && productNo) {
+    let lu = 0;
+    try { lu = GM_getValue('login_block_until', 0) || 0; } catch (e) { /* 무시 */ }
+    if (lu > Date.now()) {
+      console.log('[판매량추적] 네이버 로그인 요구로 쉬는 중이라 바로 닫음');
+      try { window.stop(); } catch (e) { /* 무시 */ }
+      finished = true;
+      closeAutoTab();
+      return;
+    }
   }
   if (autoMode && !fineMode && isSmartstore && productNo) {
     let until = 0;
@@ -683,7 +714,17 @@
     window.addEventListener('message', async (ev) => {
       const m = ev.data;
       if (!m || m.from !== 'cs-dashboard') return;
-      if (m.type === 'ping') { reply({ type: 'pong', token: GITHUB_TOKEN }); return; }
+      if (m.type === 'ping') {
+        let lb = 0, lu = 0;
+        try { lb = GM_getValue('login_block_at', 0) || 0; lu = GM_getValue('login_block_until', 0) || 0; } catch (e) { /* 무시 */ }
+        reply({ type: 'pong', token: GITHUB_TOKEN, loginBlockAt: lb, loginBlockUntil: lu });
+        return;
+      }
+      if (m.type === 'clearLoginBlock') {
+        try { GM_setValue('login_block_until', 0); GM_setValue('login_block_at', 0); } catch (e) { /* 무시 */ }
+        reply({ type: 'loginBlockCleared' });
+        return;
+      }
       if (m.type === 'units' && m.map) { unitMap = m.map; try { GM_setValue('unitMap', unitMap); } catch (e) { /* 무시 */ } return; }
       if (m.type === 'saveCategories') {
         try {
