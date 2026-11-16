@@ -1209,8 +1209,8 @@ function recordsHtml(key, day, all) {
     }
     // 마지막 구간 줄어든 양은 다음 기록과의 차이라서 그 기록도 같이 보여줌
     const next = entries.find((e) => e.dt >= end);
-    // 16시 마감 기록은 2타임 마지막 조회라 그대로 넣고, 16시 기록이 없을 때만 그 다음 기록을 '다음 기록'으로 붙임
-    if (list.length && next) list.push(next.dt.getTime() === end.getTime() ? next : Object.assign({ nextDay: true }, next));
+    // 16시 마감 기록은 2타임 마지막 조회라 그대로 넣음 (다음 날 기록은 안 붙임)
+    if (list.length && next && next.dt.getTime() === end.getTime()) list.push(next);
   }
   if (!list.length) {
     if (!all && ymd(workPeriod(day).start) < cut) {
