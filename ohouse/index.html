@@ -168,6 +168,9 @@
   .cal-bar.cont-r { border-top-right-radius:0; border-bottom-right-radius:0; margin-right:-2px; }
   .cal-bar .ext { background:#fff; color:#b91c1c; border-radius:3px; padding:0 3px; margin-left:4px; font-size:10px; }
   .cal-bar.cut { background:#ea580c !important; }
+  .promo-mode { display:flex; justify-content:flex-end; align-items:center; gap:4px; font-size:12px; color:#666; margin-bottom:6px; }
+  .promo-mode button { border:1px solid #ddd; background:#fff; border-radius:6px; padding:2px 8px; font-size:12px; cursor:pointer; }
+  .promo-mode button.on { background:#111; color:#fff; border-color:#111; }
   .ph-tbl { width:100%; border-collapse:collapse; font-size:12px; margin-top:6px; }
   .ph-tbl th, .ph-tbl td { padding:4px 6px; border-bottom:1px solid #f0f0f0; text-align:left; white-space:nowrap; }
   .ph-tbl th { background:#fafafa; }
@@ -1121,8 +1124,8 @@ function renderCalendar() {
   }
   while (cells.length % 7) cells.push({ html: '<div class="cal-day blank"></div>' });
   // 주마다 칸 + 행사 막대(스토어별로 이어진 줄)
-  const bars = promoBars();
-  let out = `<div class="cal-dows">${['일', '월', '화', '수', '목', '금', '토'].map((w, i) => `<div class="cal-dow${i === 0 ? ' sun' : i === 6 ? ' sat' : ''}">${w}</div>`).join('')}</div>`;
+  const bars = promoBarsMerged();
+  let out = `<div class="promo-mode">행사 줄 <button data-pm="0"${promoDetail ? '' : ' class="on"'}>스토어별로 묶기</button><button data-pm="1"${promoDetail ? ' class="on"' : ''}>쿠폰 하나씩 전부</button></div><div class="cal-dows">${['일', '월', '화', '수', '목', '금', '토'].map((w, i) => `<div class="cal-dow${i === 0 ? ' sun' : i === 6 ? ' sat' : ''}">${w}</div>`).join('')}</div>`;
   for (let w = 0; w < cells.length / 7; w++) {
     const wk = cells.slice(w * 7, w * 7 + 7);
     const days = wk.map((c) => c.day || null);
@@ -1161,6 +1164,11 @@ function renderCalendar() {
   }
   const cal = document.getElementById('cal');
   cal.innerHTML = out;
+  cal.querySelectorAll('[data-pm]').forEach((el) => el.addEventListener('click', () => {
+    promoDetail = el.dataset.pm === '1';
+    try { localStorage.setItem('ohPromoDetail', promoDetail ? '1' : '0'); } catch (e) { /* 무시 */ }
+    renderAll();
+  }));
   cal.querySelectorAll('.cal-bar[data-bday]').forEach((el) => el.addEventListener('click', (e) => {
     e.stopPropagation();
     let d = el.dataset.bday;
@@ -1898,6 +1906,53 @@ function promoBars() {
   bars.sort((a, b) => (a.from < b.from ? -1 : a.from > b.from ? 1 : (b.to > a.to ? 1 : -1)));
   promoBarsCache = bars;
   return bars;
+}
+// 달력용: 같은 스토어 쿠폰이 겹치거나 이어지면 한 줄로 묶음 (쿠폰 여러 개면 할인율 범위와 개수 표시)
+let promoDetail = false;
+try { promoDetail = localStorage.getItem('ohPromoDetail') === '1'; } catch (e) { /* 무시 */ }
+function promoBarsMerged() {
+  const all = promoBars();
+  if (promoDetail) return all;
+  const today = ymd(new Date());
+  const addDays1 = (d, n) => { const x = toDate(d); x.setDate(x.getDate() + n); return ymd(x); };
+  const out = [];
+  const storeOrder = [];
+  all.forEach((b) => { if (!storeOrder.includes(b.store)) storeOrder.push(b.store); });
+  storeOrder.forEach((store) => {
+    ['coupon', 'cut'].forEach((kind) => {
+      const bs = all.filter((b) => b.store === store && b.kind === kind).sort((a, b) => (a.from < b.from ? -1 : 1));
+      let g = null;
+      bs.forEach((b) => {
+        if (g && b.from <= addDays1(g.to, 1)) {
+          if (b.to > g.to) g.to = b.to;
+          if (b.real > g.real) g.real = b.real;
+          g.ext = g.ext || b.ext;
+          g.parts.push(b);
+        } else {
+          g = { store, kind, from: b.from, to: b.to, real: b.real, ext: b.ext, parts: [b] };
+          out.push(g);
+        }
+      });
+    });
+  });
+  out.forEach((g) => {
+    if (g.kind === 'cut' || g.parts.length === 1) { Object.assign(g, { label: g.parts[0].label, tip: g.parts[0].tip }); return; }
+    const rates = [...new Set(g.parts.map((b) => Number((b.label.match(/(\d+)%/) || [])[1])).filter(Boolean))].sort((a, b) => a - b);
+    const rt = !rates.length ? '' : rates.length <= 3 ? `${rates.join('·')}%` : `${rates[0]}~${rates[rates.length - 1]}%`;
+    g.label = `${g.store} 쿠폰 ${rt}`;
+    // 같은 이름, 같은 할인율 쿠폰은 한 줄로 (오늘만 반짝 특가처럼 매번 새로 나오는 쿠폰)
+    const kinds = {};
+    g.parts.forEach((b) => {
+      const name = b.tip.split('\n')[0].replace(g.store + ' · ', '');
+      const k = name.replace(/ · 최대.*$/, '');
+      (kinds[k] = kinds[k] || { name, n: 0, from: b.from, to: b.to });
+      kinds[k].n++;
+      if (b.from < kinds[k].from) kinds[k].from = b.from;
+      if (b.to > kinds[k].to) kinds[k].to = b.to;
+    });
+    g.tip = `${g.store} 쿠폰 ${rt} · ${md(g.from)} ~ ${md(g.to)}${g.real >= today ? ' 진행중' : ''}\n` + Object.values(kinds).map((x) => `· ${x.name} (${md(x.from)}~${md(x.to)}${x.n > 1 ? `, ${x.n}번 발급` : ''})`).join('\n');
+  });
+  return out;
 }
 function storeColor(store) {
   const it = items.find((x) => x.store === store);
