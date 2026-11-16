@@ -1202,6 +1202,11 @@ function recordsHtml(key, day, all) {
   } else {
     const { start, end } = workPeriod(day);
     list = entries.filter((e) => e.dt >= start && e.dt < end);
+    // 16시 마감 기록이 없으면(15일 지난 기록은 바뀐 시각만 남음) 그 전 마지막 기록을 기준 재고로 앞에 붙임
+    if (list.length && list[0].dt > start) {
+      const before = entries.filter((e) => e.dt < start).pop();
+      if (before) list.unshift(Object.assign({ baseEarly: true }, before));
+    }
     // 마지막 구간 줄어든 양은 다음 기록과의 차이라서 그 기록도 같이 보여줌
     const next = entries.find((e) => e.dt >= end);
     // 16시 마감 기록은 2타임 마지막 조회라 그대로 넣고, 16시 기록이 없을 때만 그 다음 기록을 '다음 기록'으로 붙임
@@ -1234,7 +1239,7 @@ function recordsHtml(key, day, all) {
       // 맨 앞 16시 기록은 직전 근무일 마감 재고라 판매 계산의 기준으로만 씀
       const ns = e.nextDay ? sec : e.dt.getTime() <= start.getTime() ? '0' : (e.dt <= split ? '1' : '2');
       if (ns !== sec) {
-        html += `<div class="dayhdr">${ns === '0' ? '기준 재고 (직전 근무일 16시 마감, 판매에 안 들어감)' : ns === '1' ? '1타임 아침물량 (직전 근무일 17시 조회 ~ 07시 조회)' : '2타임 오후물량 (08시 조회 ~ 16시 조회)'}</div>`;
+        html += `<div class="dayhdr">${ns === '0' ? (e.baseEarly ? '기준 재고 (직전 근무일 16시 마감 재고 = 그 전에 마지막으로 바뀐 기록, 판매에 안 들어감)' : '기준 재고 (직전 근무일 16시 마감, 판매에 안 들어감)') : ns === '1' ? '1타임 아침물량 (직전 근무일 17시 조회 ~ 07시 조회)' : '2타임 오후물량 (08시 조회 ~ 16시 조회)'}</div>`;
         sec = ns;
       }
       html += recLine(e, prev, fl, key);
