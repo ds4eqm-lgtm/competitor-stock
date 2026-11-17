@@ -266,6 +266,7 @@
             <th data-key="price" class="num">단가</th>
             <th data-key="s" class="num" id="hS">전체 판매</th>
             <th data-key="rev" class="num" id="hRev">매출</th>
+            <th data-key="inc" class="num" id="hInc">입고<br><span class="th-sub">재고 늘어난 양</span></th>
             <th data-key="t1" class="num" id="hT1">1타임 아침물량<br><span class="th-sub">17시~07시 조회</span></th>
             <th data-key="t2" class="num" id="hT2">2타임 오후물량<br><span class="th-sub">08시~16시 조회</span></th>
             <th data-key="k" class="num" id="stockHead">마감 재고</th>
@@ -1166,7 +1167,7 @@ function ensureArchive(months) {
     archiveState[m] = 'loading';
     fetchRepoFile(`data/archive/${m}.json`).then((f) => { try { archiveData[m] = JSON.parse(f.text || '{}'); } catch (e) { archiveData[m] = {}; } })
       .catch(() => { archiveData[m] = {}; })
-      .then(() => { archiveState[m] = 'done'; Object.keys(fullRecCache).forEach((k) => delete fullRecCache[k]); renderAll(); });
+      .then(() => { archiveState[m] = 'done'; Object.keys(fullRecCache).forEach((k) => delete fullRecCache[k]); Object.keys(incCache).forEach((k) => delete incCache[k]); Object.keys(incBigCache).forEach((k) => delete incBigCache[k]); Object.keys(fullSortedCache).forEach((k) => delete fullSortedCache[k]); renderAll(); });
   });
   return false;
 }
@@ -1178,6 +1179,38 @@ function fullRec(key) {
   Object.assign(out, historyData[key] || {});
   return (fullRecCache[key] = out);
 }
+
+// 입고(재고가 늘어난 양) : 근무일 범위 안의 기록마다 직전 기록보다 늘어난 만큼 더함 (15일 지난 날은 바뀐 시각 보관 기록으로 계산)
+const incCache = {};
+const fullSortedCache = {};
+function fullSorted(key) {
+  if (fullSortedCache[key]) return fullSortedCache[key];
+  const rec = fullRec(key);
+  return (fullSortedCache[key] = Object.keys(rec).sort().map((t) => ({ dt: toDate(t), v: rec[t] })));
+}
+function incOf(key, day) {
+  const ck = key + '|' + day;
+  if (ck in incCache) return incCache[ck];
+  const { start, end } = workPeriod(day);
+  if (ymd(start) < keepCutoff() && !ensureArchive(monthsBetween(ymd(start).slice(0, 7), ymd(end).slice(0, 7)))) return null; // 불러오는 중
+  const es = fullSorted(key);
+  const now = new Date();
+  let inc = 0, big = 0;
+  // start 보다 뒤인 첫 기록 위치를 이진 탐색
+  let lo = 0, hi = es.length;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (es[mid].dt <= start) lo = mid + 1; else hi = mid; }
+  for (let i = Math.max(1, lo); i < es.length; i++) {
+    if (es[i].dt > end || es[i].dt > now) break;
+    const d = es[i].v - es[i - 1].v;
+    if (d > 0) { inc += d; if (isBig(key, d, DETECT.BIG_RISE)) big += d; }
+  }
+  incBigCache[ck] = big;
+  return (incCache[ck] = inc);
+}
+// 그 중 한 번에 200박스(200m) 이상 늘어난 대량 증가 (재고 숫자를 크게 고친 경우가 많아서 합계에서는 뺌)
+const incBigCache = {};
+const incBigOf = (key, day) => (incOf(key, day) == null ? 0 : incBigCache[key + '|' + day] || 0);
+const incCell = (key, inc, big) => (inc == null ? '<span class="small">…</span>' : inc > 0 ? `<span style="color:#2563eb;font-weight:700">+${fmtNum(toBox(key, inc))}${unitLabel(key)}</span>${big > 0 ? `<br><span class="small" style="color:#7c3aed">▲ 대량 +${fmtNum(toBox(key, big))} 포함</span>` : ''}` : '<span class="small">-</span>');
 
 function recordsHtml(key, day, all) {
   const fl = flagsAll[key] || {};
@@ -1323,19 +1356,23 @@ function rangeDays() {
 }
 // 한 옵션의 기간 합계 { raw, box, won, sellDays, miss, perDay: [[day, raw, won]] }
 function rangeOf(key, days) {
-  const o = { raw: 0, box: 0, won: 0, sellDays: 0, miss: 0, perDay: [] };
+  const o = { raw: 0, box: 0, won: 0, sellDays: 0, miss: 0, perDay: [], inc: 0, big: 0, incWait: false };
   days.forEach((d) => {
+    const inc = incOf(key, d);
+    if (inc == null) o.incWait = true; else { o.inc += inc; o.big += incBigOf(key, d); }
     const v = dayData[d] && dayData[d][key];
-    if (!v) return;
+    if (!v) { if (inc) o.perDay.push([d, 0, 0, inc]); return; }
     const raw = soldOf(key, v);
     const p = priceAt(key, d);
     const won = raw && p != null ? raw * p : 0;
     if (raw && p == null) o.miss++;
     if (raw > 0) o.sellDays++;
     o.raw += raw; o.won += won;
-    o.perDay.push([d, raw, won]);
+    o.perDay.push([d, raw, won, inc || 0]);
   });
   o.box = toBox(key, o.raw);
+  o.incBox = toBox(key, o.inc);
+  o.bigBox = toBox(key, o.big);
   return o;
 }
 function setTableHeads(range) {
@@ -1349,7 +1386,7 @@ function renderRangeTable() {
   const { from, to, days } = rangeDays();
   const n = days.length;
   document.getElementById('dayTitle').textContent = `기간 누계 ${Number(from.slice(5, 7))}/${Number(from.slice(8))} ~ ${Number(to.slice(5, 7))}/${Number(to.slice(8))}`;
-  document.getElementById('daySub').textContent = `근무일 ${n}일 합계${days.includes(currentDay) ? ' (오늘 진행중 포함)' : ''} · 줄을 누르면 날짜별 판매와 매출이 펼쳐져요`;
+  document.getElementById('daySub').textContent = `근무일 ${n}일 합계${days.includes(currentDay) ? ' (오늘 진행중 포함)' : ''} · 줄을 누르면 날짜별 판매, 매출, 입고가 펼쳐져요`;
   document.getElementById('stockHead').textContent = '현재 재고';
   const list = items.filter(matchFilter);
   let rows;
@@ -1360,11 +1397,11 @@ function renderRangeTable() {
       const r = rangeOf(it.key, days);
       const last = lastRecord(it.key);
       const pr = priceAt(it.key, to);
-      const x = g[pid] = g[pid] || { it, keys: [], site: it.site, store: it.store, optionName: it.productName || it.optionName || '', raw: 0, s: 0, rev: 0, miss: 0, k: 0, kAny: false, last: '', prices: [], perDay: {}, sellDaySet: new Set(), opts: 0 };
+      const x = g[pid] = g[pid] || { it, keys: [], site: it.site, store: it.store, optionName: it.productName || it.optionName || '', raw: 0, s: 0, rev: 0, miss: 0, k: 0, kAny: false, last: '', prices: [], perDay: {}, sellDaySet: new Set(), opts: 0, inc: 0, incWait: false };
       x.keys.push(it.key); x.opts++;
       x.site = Math.min(x.site, it.site);
-      x.s += r.box; x.rev += r.won; x.miss += r.miss;
-      r.perDay.forEach(([d, raw, won]) => { const pd = x.perDay[d] = x.perDay[d] || { box: 0, won: 0 }; pd.box += toBox(it.key, raw); pd.won += won; if (raw > 0) x.sellDaySet.add(d); });
+      x.s += r.box; x.rev += r.won; x.miss += r.miss; x.inc += r.incBox; x.big = (x.big || 0) + r.bigBox; x.incWait = x.incWait || r.incWait;
+      r.perDay.forEach(([d, raw, won, inc]) => { const pd = x.perDay[d] = x.perDay[d] || { box: 0, won: 0, inc: 0 }; pd.box += toBox(it.key, raw); pd.won += won; pd.inc += toBox(it.key, inc || 0); if (raw > 0) x.sellDaySet.add(d); });
       if (last) { x.k += Number(last.v) || 0; x.kAny = true; }
       const lc = lastCheck(it.key);
       if (lc.t > x.last) { x.last = lc.t; x.lcChanged = lc.changed; } else if (lc.t === x.last && lc.changed) x.lcChanged = true;
@@ -1373,7 +1410,7 @@ function renderRangeTable() {
     rows = Object.values(g).map((x) => Object.assign(x, {
       price: x.prices.length ? Math.min(...x.prices) : -1, priceMax: x.prices.length ? Math.max(...x.prices) : -1,
       t1: n ? x.s / n : 0, t2: x.sellDaySet.size, k: x.kAny ? x.k : -1, rowKey: 'link:' + x.it.product,
-      perDayList: Object.keys(x.perDay).sort().map((d) => [d, x.perDay[d].box, x.perDay[d].won]),
+      perDayList: Object.keys(x.perDay).sort().map((d) => [d, x.perDay[d].box, x.perDay[d].won, x.perDay[d].inc]),
     }));
   } else {
     rows = list.map((it) => {
@@ -1382,7 +1419,8 @@ function renderRangeTable() {
       const pr = priceAt(it.key, to);
       return { it, keys: [it.key], site: it.site, store: it.store, optionName: it.optionName || '', s: r.box, rev: r.won, miss: r.miss, t1: n ? r.box / n : 0, t2: r.sellDays,
         price: pr == null ? -1 : pr, priceMax: pr == null ? -1 : pr, k: last ? Number(last.v) : -1, lc: lastCheck(it.key), last: lastCheck(it.key).t, rowKey: it.key,
-        perDayList: r.perDay.map(([d, raw, won]) => [d, toBox(it.key, raw), won]) };
+        inc: r.incBox, big: r.bigBox, incWait: r.incWait,
+        perDayList: r.perDay.map(([d, raw, won, inc]) => [d, toBox(it.key, raw), won, toBox(it.key, inc || 0)]) };
     });
   }
   rows.sort((a, b) => {
@@ -1393,8 +1431,9 @@ function renderRangeTable() {
   // 합계
   const tot = {};
   let won = 0, miss = 0;
-  rows.forEach((r) => { const lb = unitLabel(r.keys[0]); tot[lb] = (tot[lb] || 0) + r.s; won += r.rev; miss += r.miss; });
-  document.getElementById('rgTotal').innerHTML = `<div class="rg-total"><span>기간 판매 <b>${fmtSums(tot)}</b></span><span>기간 매출 <b>${fmtWonFull(won)}</b></span><span>일평균 매출 <b>${n ? fmtWonFull(won / n) : '0원'}</b></span>${miss ? `<span class="calc-warn">단가 없는 판매 ${miss}건 제외</span>` : ''}</div>`;
+  const totInc = {};
+  rows.forEach((r) => { const lb = unitLabel(r.keys[0]); tot[lb] = (tot[lb] || 0) + r.s; totInc[lb] = (totInc[lb] || 0) + Math.max(0, (r.inc || 0) - (r.big || 0)); won += r.rev; miss += r.miss; });
+  document.getElementById('rgTotal').innerHTML = `<div class="rg-total"><span>기간 판매 <b>${fmtSums(tot)}</b></span><span>기간 매출 <b>${fmtWonFull(won)}</b></span><span>일평균 매출 <b>${n ? fmtWonFull(won / n) : '0원'}</b></span><span title="한 번에 200박스(200m) 이상 늘어난 대량 증가는 재고 숫자를 고친 경우가 많아서 합계에서 뺐어요 (표에는 그대로 나와요)">기간 입고 <b style="color:#2563eb">+${fmtSums(totInc)}</b> <span class="small">(대량 증가 제외)</span></span>${miss ? `<span class="calc-warn">단가 없는 판매 ${miss}건 제외</span>` : ''}</div>`;
   document.getElementById('count').innerHTML = `${rows.length}개 ${rangeGroup === 'link' ? '링크' : '옵션'} 표시중` +
     (sortKey !== 'site' ? ' · <a href="#" id="siteSort">사이트 순서로 되돌리기</a>' : ' · 사이트 순서 · 제목을 누르면 정렬돼요 (기간 매출 순 추천)');
   const ss = document.getElementById('siteSort');
@@ -1413,14 +1452,15 @@ function renderRangeTable() {
       <td class="num">${priceTxt}</td>
       <td class="num sold${r.s >= 10 ? ' sold-high' : ''}">${fmtNum(r.s)}${unitLabel(key)}${unitNote(key) ? `<br><span class="small">${unitNote(key)}</span>` : ''}</td>
       <td class="num" style="color:#047857;font-weight:600">${fmtWonFull(r.rev)}${r.miss ? '<br><span class="small">단가 없는 판매 제외</span>' : ''}</td>
+      <td class="num">${r.incWait ? '<span class="small">…</span>' : r.inc > 0 ? `<span style="color:#2563eb;font-weight:700">+${fmtNum(r.inc)}${unitLabel(key)}</span>${r.big > 0 ? `<br><span class="small" style="color:#7c3aed">▲ 대량 +${fmtNum(r.big)} 포함</span>` : ''}` : '<span class="small">-</span>'}</td>
       <td class="num">${fmtNum(r.t1)}${unitLabel(key)}</td>
       <td class="num">${r.t2}일</td>
       <td class="num">${r.k >= 0 ? `${r.k.toLocaleString()}개` : '-'}</td>
       <td class="num small">${lastCell(r.lc || { t: r.last, changed: !!r.lcChanged })}</td>
     </tr>`;
     if (openKey === r.rowKey) {
-      html += `<tr class="detail"><td colspan="9"><div class="detail-head"><b>${esc(r.optionName)}</b> 날짜별</div>
-        <table class="rg-days"><tr><th>날짜</th><th>판매</th><th>매출</th></tr>${r.perDayList.filter(([, b]) => b > 0).map(([d, b, w]) => `<tr><td>${d.slice(5).replace('-', '/')} (${'일월화수목금토'[toDate(d).getDay()]})</td><td>${fmtNum(b)}${unitLabel(key)}</td><td>${fmtWonFull(w)}</td></tr>`).join('') || '<tr><td colspan="3">이 기간 판매 없음</td></tr>'}</table>
+      html += `<tr class="detail"><td colspan="10"><div class="detail-head"><b>${esc(r.optionName)}</b> 날짜별</div>
+        <table class="rg-days"><tr><th>날짜</th><th>판매 (−)</th><th>매출</th><th>입고 (+)</th></tr>${r.perDayList.filter(([, b, , inc]) => b > 0 || inc > 0).map(([d, b, w, inc]) => `<tr><td>${d.slice(5).replace('-', '/')} (${'일월화수목금토'[toDate(d).getDay()]})</td><td>${b > 0 ? `${fmtNum(b)}${unitLabel(key)}` : '-'}</td><td>${b > 0 ? fmtWonFull(w) : '-'}</td><td>${inc > 0 ? `<span style="color:#2563eb;font-weight:700">+${fmtNum(inc)}${unitLabel(key)}</span>` : '-'}</td></tr>`).join('') || '<tr><td colspan="4">이 기간 판매, 입고 없음</td></tr>'}</table>
         ${rangeGroup === 'opt' ? unitEditorHtml(r.it) : ''}
       </td></tr>`;
     }
@@ -1483,7 +1523,8 @@ function renderTable() {
       const v = dd0[it.key] || null;
       const last = lastRecord(it.key);
       const pr = priceAt(it.key, selectedDay);
-      return { it, v, site: it.site, price: pr == null ? -1 : pr, rev: v && pr != null ? soldOf(it.key, v) * pr : -1, s: v ? soldBox(it.key, v) : -1, t1: v && v.t1 ? soldBox(it.key, v.t1) : -1, t2: v && v.t2 ? soldBox(it.key, v.t2) : -1, k: v ? v.k : -1, store: it.store, optionName: it.optionName || '', lc: lastCheck(it.key), last: lastCheck(it.key).t };
+      const inc = incOf(it.key, selectedDay);
+      return { it, v, inc: inc == null ? -1 : toBox(it.key, inc), incRaw: inc, site: it.site, price: pr == null ? -1 : pr, rev: v && pr != null ? soldOf(it.key, v) * pr : -1, s: v ? soldBox(it.key, v) : -1, t1: v && v.t1 ? soldBox(it.key, v.t1) : -1, t2: v && v.t2 ? soldBox(it.key, v.t2) : -1, k: v ? v.k : -1, store: it.store, optionName: it.optionName || '', lc: lastCheck(it.key), last: lastCheck(it.key).t };
     });
 
   rows.sort((a, b) => {
@@ -1510,6 +1551,7 @@ function renderTable() {
       <td class="num">${priceCell(r.it.key, r.price)}</td>
       <td class="num ${hi}">${soldCell(r.v, r.it.key)}${r.v && unitNote(r.it.key) ? `<br><span class="small">${unitNote(r.it.key)}</span>` : ''}</td>
       <td class="num" style="color:#047857;font-weight:600">${r.rev > 0 ? fmtWonFull(r.rev) : r.v && r.price < 0 && soldOf(r.it.key, r.v) > 0 ? '<span class="small">단가 없음</span>' : r.v ? '0원' : '-'}</td>
+      <td class="num">${incCell(r.it.key, r.incRaw, incBigOf(r.it.key, selectedDay))}</td>
       <td class="num">${slotCell(r.v && r.v.t1, r.it.key)}</td>
       <td class="num">${slotCell(r.v && r.v.t2, r.it.key)}</td>
       <td class="num">${r.v ? `${Number(r.v.k).toLocaleString()}개` : '-'}</td>
@@ -1517,7 +1559,7 @@ function renderTable() {
     </tr>`;
     if (openKey === r.it.key) {
       const all = showAllFor === r.it.key;
-      html += `<tr class="detail"><td colspan="9">
+      html += `<tr class="detail"><td colspan="10">
         <div class="detail-head">
           <b>${esc(r.optionName)}</b>
           <button data-toggle-all="${esc(r.it.key)}">${all ? '이 날 기록만 보기' : '전체 기록 보기 (최근 15일 + 이전은 바뀐 시각만)'}</button>
@@ -2348,6 +2390,8 @@ async function loadData(isRefresh) {
   flagsAll = detectSuspicious(historyData);
   sendUnitsToTracker();
   Object.keys(sheetKeyCache).forEach((k) => delete sheetKeyCache[k]);
+  Object.keys(fullRecCache).forEach((k) => delete fullRecCache[k]);
+  Object.keys(incCache).forEach((k) => delete incCache[k]); Object.keys(incBigCache).forEach((k) => delete incBigCache[k]); Object.keys(fullSortedCache).forEach((k) => delete fullSortedCache[k]);
   // 사이트 옵션 순서: products.txt 상품 순서 → 상품 안에서는 옵션이 처음 기록된 순서(사이트 순서)
   const optIdx = {};
   items.forEach((it, i) => { optIdx[it.key] = i; });
