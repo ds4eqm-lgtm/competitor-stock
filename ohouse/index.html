@@ -299,7 +299,7 @@
             <th data-key="price" class="num">단가</th>
             <th data-key="s" class="num" id="hS">전체 판매</th>
             <th data-key="rev" class="num" id="hRev">매출</th>
-            <th data-key="inc" class="num" id="hInc">입고<br><span class="th-sub">재고 늘어난 양</span></th>
+            <th data-key="inc" class="num" id="hInc">입고<br><span class="th-sub">1회 1,000개 이상 제외</span></th>
             <th data-key="t1" class="num" id="hT1">1타임 아침물량<br><span class="th-sub">17시~07시 조회</span></th>
             <th data-key="t2" class="num" id="hT2">2타임 오후물량<br><span class="th-sub">08시~16시 조회</span></th>
             <th data-key="k" class="num" id="stockHead">마감 재고</th>
@@ -1275,15 +1275,17 @@ function incOf(key, day) {
   for (let i = Math.max(1, lo); i < es.length; i++) {
     if (es[i].dt > end || es[i].dt > now) break;
     const d = es[i].v - es[i - 1].v;
-    if (d > 0) { inc += d; if (isBig(key, d, DETECT.BIG_RISE)) big += d; }
+    // 한 번 조회에 1,000개 이상 늘어난 건 판매자가 재고 숫자를 고친 것으로 보고 입고에서 뺌
+    if (d > 0) { if (d >= INC_SKIP) big += d; else inc += d; }
   }
   incBigCache[ck] = big;
   return (incCache[ck] = inc);
 }
-// 그 중 한 번에 200박스(200m) 이상 늘어난 대량 증가 (재고 숫자를 크게 고친 경우가 많아서 합계에서는 뺌)
+// 입고에서 뺀 큰 증가 (한 번에 1,000개 이상)
+const INC_SKIP = 1000;
 const incBigCache = {};
 const incBigOf = (key, day) => (incOf(key, day) == null ? 0 : incBigCache[key + '|' + day] || 0);
-const incCell = (key, inc, big) => (inc == null ? '<span class="small">…</span>' : inc > 0 ? `<span style="color:#2563eb;font-weight:700">+${fmtNum(toBox(key, inc))}${unitLabel(key)}</span>${big > 0 ? `<br><span class="small" style="color:#7c3aed">▲ 대량 +${fmtNum(toBox(key, big))} 포함</span>` : ''}` : '<span class="small">-</span>');
+const incCell = (key, inc) => (inc == null ? '<span class="small">…</span>' : inc > 0 ? `<span style="color:#2563eb;font-weight:700">+${fmtNum(toBox(key, inc))}${unitLabel(key)}</span>` : '<span class="small">-</span>');
 
 function recordsHtml(key, day, all) {
   const fl = flagsAll[key] || {};
@@ -1505,8 +1507,8 @@ function renderRangeTable() {
   const tot = {};
   let won = 0, miss = 0;
   const totInc = {};
-  rows.forEach((r) => { const lb = unitLabel(r.keys[0]); tot[lb] = (tot[lb] || 0) + r.s; totInc[lb] = (totInc[lb] || 0) + Math.max(0, (r.inc || 0) - (r.big || 0)); won += r.rev; miss += r.miss; });
-  document.getElementById('rgTotal').innerHTML = `<div class="rg-total"><span>기간 판매 <b>${fmtSums(tot)}</b></span><span>기간 매출 <b>${fmtWonFull(won)}</b></span><span>일평균 매출 <b>${n ? fmtWonFull(won / n) : '0원'}</b></span><span title="한 번에 200박스(200m) 이상 늘어난 대량 증가는 재고 숫자를 고친 경우가 많아서 합계에서 뺐어요 (표에는 그대로 나와요)">기간 입고 <b style="color:#2563eb">+${fmtSums(totInc)}</b> <span class="small">(대량 증가 제외)</span></span>${miss ? `<span class="calc-warn">단가 없는 판매 ${miss}건 제외</span>` : ''}</div>`;
+  rows.forEach((r) => { const lb = unitLabel(r.keys[0]); tot[lb] = (tot[lb] || 0) + r.s; totInc[lb] = (totInc[lb] || 0) + (r.inc || 0); won += r.rev; miss += r.miss; });
+  document.getElementById('rgTotal').innerHTML = `<div class="rg-total"><span>기간 판매 <b>${fmtSums(tot)}</b></span><span>기간 매출 <b>${fmtWonFull(won)}</b></span><span>일평균 매출 <b>${n ? fmtWonFull(won / n) : '0원'}</b></span><span title="한 번 조회에 1,000개 이상 늘어난 건 판매자가 재고 숫자를 고친 것으로 보고 입고에서 뺐어요">기간 입고 <b style="color:#2563eb">+${fmtSums(totInc)}</b> <span class="small">(1회 1,000개 이상 증가 제외)</span></span>${miss ? `<span class="calc-warn">단가 없는 판매 ${miss}건 제외</span>` : ''}</div>`;
   document.getElementById('count').innerHTML = `${rows.length}개 ${rangeGroup === 'link' ? '링크' : '옵션'} 표시중` +
     (sortKey !== 'site' ? ' · <a href="#" id="siteSort">사이트 순서로 되돌리기</a>' : ' · 사이트 순서 · 제목을 누르면 정렬돼요 (기간 매출 순 추천)');
   const ss = document.getElementById('siteSort');
@@ -1525,7 +1527,7 @@ function renderRangeTable() {
       <td class="num">${priceTxt}</td>
       <td class="num sold${r.s >= 10 ? ' sold-high' : ''}">${fmtNum(r.s)}${unitLabel(key)}${unitNote(key) ? `<br><span class="small">${unitNote(key)}</span>` : ''}</td>
       <td class="num" style="color:#047857;font-weight:600">${fmtWonFull(r.rev)}${r.miss ? '<br><span class="small">단가 없는 판매 제외</span>' : ''}</td>
-      <td class="num">${r.incWait ? '<span class="small">…</span>' : r.inc > 0 ? `<span style="color:#2563eb;font-weight:700">+${fmtNum(r.inc)}${unitLabel(key)}</span>${r.big > 0 ? `<br><span class="small" style="color:#7c3aed">▲ 대량 +${fmtNum(r.big)} 포함</span>` : ''}` : '<span class="small">-</span>'}</td>
+      <td class="num">${r.incWait ? '<span class="small">…</span>' : r.inc > 0 ? `<span style="color:#2563eb;font-weight:700">+${fmtNum(r.inc)}${unitLabel(key)}</span>` : '<span class="small">-</span>'}</td>
       <td class="num">${fmtNum(r.t1)}${unitLabel(key)}</td>
       <td class="num">${r.t2}일</td>
       <td class="num">${r.k >= 0 ? `${r.k.toLocaleString()}개` : '-'}</td>
