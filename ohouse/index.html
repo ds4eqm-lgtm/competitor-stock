@@ -166,6 +166,7 @@
   .cal-bar { position:relative; z-index:3; margin:1px 2px; height:17px; line-height:17px; border-radius:4px; color:#fff; font-size:11px; font-weight:700; padding:0 6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:pointer; box-shadow:0 1px 1px rgba(0,0,0,.15); }
   .cal-bar.cont-l { border-top-left-radius:0; border-bottom-left-radius:0; margin-left:-2px; }
   .cal-bar.cont-r { border-top-right-radius:0; border-bottom-right-radius:0; margin-right:-2px; }
+  .cal-bar.flash { opacity:.8; font-weight:600; border-left:3px dotted rgba(255,255,255,.9); }
   .cal-bar .ext { background:#fff; color:#b91c1c; border-radius:3px; padding:0 3px; margin-left:4px; font-size:10px; }
   .cal-bar.cut { background:#ea580c !important; }
   .promo-mode { display:flex; justify-content:flex-end; align-items:center; gap:4px; font-size:12px; color:#666; margin-bottom:6px; }
@@ -1126,7 +1127,7 @@ function renderCalendar() {
   while (cells.length % 7) cells.push({ html: '<div class="cal-day blank"></div>' });
   // 주마다 칸 + 행사 막대(스토어별로 이어진 줄)
   const bars = promoBarsMerged();
-  let out = `<div class="promo-mode">행사 줄 <button data-pm="0"${promoDetail ? '' : ' class="on"'}>스토어별로 묶기</button><button data-pm="1"${promoDetail ? ' class="on"' : ''}>쿠폰 하나씩 전부</button></div><div class="cal-dows">${['일', '월', '화', '수', '목', '금', '토'].map((w, i) => `<div class="cal-dow${i === 0 ? ' sun' : i === 6 ? ' sat' : ''}">${w}</div>`).join('')}</div>`;
+  let out = `<div class="promo-mode">행사 줄 ${[['store', '스토어마다 한 줄'], ['kind', '쿠폰 종류별'], ['all', '쿠폰 하나씩 전부']].map(([v, t]) => `<button data-pm="${v}"${promoMode === v ? ' class="on"' : ''}>${t}</button>`).join('')}</div><div class="cal-dows">${['일', '월', '화', '수', '목', '금', '토'].map((w, i) => `<div class="cal-dow${i === 0 ? ' sun' : i === 6 ? ' sat' : ''}">${w}</div>`).join('')}</div>`;
   for (let w = 0; w < cells.length / 7; w++) {
     const wk = cells.slice(w * 7, w * 7 + 7);
     const days = wk.map((c) => c.day || null);
@@ -1157,7 +1158,7 @@ function renderCalendar() {
       const contL = b.from < days[sg.s0];
       const contR = b.to > days[sg.e0];
       // 쿠폰 종료일까지 같은 색으로 이어서 표시
-      const cls = ['cal-bar', b.kind === 'cut' ? 'cut' : '', contL ? 'cont-l' : '', contR ? 'cont-r' : ''].filter(Boolean).join(' ');
+      const cls = ['cal-bar', b.kind === 'cut' ? 'cut' : '', b.flash ? 'flash' : '', contL ? 'cont-l' : '', contR ? 'cont-r' : ''].filter(Boolean).join(' ');
       wh += `<div class="${cls}" style="grid-row:${sg.l + 2};grid-column:${sg.s0 + 1} / ${sg.e0 + 2};background:${col}" title="${esc(b.tip)}" data-bday="${days[sg.s0]}">${contL ? '◀ ' : ''}${esc(b.label)}${b.ext ? ' <span class="ext">연장</span>' : ''}</div>`;
     });
     wh += '</div>';
@@ -1166,8 +1167,8 @@ function renderCalendar() {
   const cal = document.getElementById('cal');
   cal.innerHTML = out;
   cal.querySelectorAll('[data-pm]').forEach((el) => el.addEventListener('click', () => {
-    promoDetail = el.dataset.pm === '1';
-    try { localStorage.setItem('ohPromoDetail', promoDetail ? '1' : '0'); } catch (e) { /* 무시 */ }
+    promoMode = el.dataset.pm;
+    try { localStorage.setItem('ohPromoMode', promoMode); } catch (e) { /* 무시 */ }
     renderAll();
   }));
   cal.querySelectorAll('.cal-bar[data-bday]').forEach((el) => el.addEventListener('click', (e) => {
@@ -1922,7 +1923,8 @@ function promoBars() {
     const covered = new Set();
     const cs = Object.entries((promosData && promosData.coupons) || {}).filter(([, c]) => Object.keys(c.pids || {}).some((p) => pids.has(p)));
     cs.forEach(([id, c]) => {
-      const from = ymd(toDate(c.first || c.last));
+      const seen = c.seen || c.first || c.last;
+      const from = ymd(toDate(seen));
       const active = couponActive(c);
       const lastDay = ymd(toDate(c.last));
       const endDay = couponEndDay(c);
@@ -1933,7 +1935,11 @@ function promoBars() {
       const short = String(c.t || '').replace(/주식회사\s*/g, '').replace(new RegExp(store.replace(/주식회사\s*/g, '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), '').replace(/\d+%/g, '').replace(/쿠폰/g, '').replace(/\s+/g, ' ').trim();
       const ext = Array.isArray(c.ext) && c.ext.length ? c.ext : null;
       const extTxt = ext ? ` (연장 ${ext.map((x) => `${md(couponEndDay({ end: x.from }))}→${md(couponEndDay({ end: x.to }))}`).join(', ')})` : '';
-      bars.push({ store, kind: 'coupon', ext: !!ext, from, to, real: active ? today : lastDay, label: `${store} ${rate} ${short}`.replace(/\s+/g, ' ').trim(), tip: `${store} · ${c.t || '상품쿠폰'} ${rate}${c.max ? ` · 최대 ${fmtWonFull(c.max)}` : ''}${c.min > 1 ? ` · ${fmtWonFull(c.min)} 이상` : ''}${extTxt}\n${md(from)} ~ ${md(to)}${active ? (endDay ? ` (종료 ${c.end.replace('T', ' ')}, ${leftText(c.end)})` : ' (진행중, 종료일 모름)') : ' (종료)'}`, id });
+      // 단발 쿠폰: 시작부터 종료까지 30시간 이하이거나 이름에 오늘만, 반짝, 원데이, 타임이 들어간 쿠폰 (12시간, 하루마다 새로 나옴)
+      const endT = c.end ? toDate(c.end) : (() => { const x = toDate(c.last); x.setHours(x.getHours() + 1); return x; })();
+      const durH = (endT - toDate(seen)) / 3600000;
+      const flash = durH <= 30 || /오늘만|반짝|원데이|타임/.test(c.t || '');
+      bars.push({ store, kind: 'coupon', flash, rate: Number(c.r) || 0, short, gk: flash ? 'flash' : `p|${short}|${Number(c.r) || 0}`, ext: !!ext, from, to, real: active ? today : lastDay, label: `${flash ? '⚡ ' : ''}${store} ${rate} ${short}`.replace(/\s+/g, ' ').trim(), tip: `${store} · ${c.t || '상품쿠폰'} ${rate}${c.max ? ` · 최대 ${fmtWonFull(c.max)}` : ''}${c.min > 1 ? ` · ${fmtWonFull(c.min)} 이상` : ''}${extTxt}\n${md(from)} ~ ${md(to)}${active ? (endDay ? ` (종료 ${c.end.replace('T', ' ')}, ${leftText(c.end)})` : ' (진행중, 종료일 모름)') : ' (종료)'}`, id });
     });
     // 2) 가격 기록으로 본 쿠폰, 판매가 인하 (날짜별)
     const keys = its.map((it) => it.key);
@@ -1950,27 +1956,32 @@ function promoBars() {
         else cur[kind] = null;
       });
     }
-    runs.coupon.forEach((r) => bars.push({ store, kind: 'coupon', from: r.from, to: r.to, real: r.to, label: `${store} 쿠폰 최대 ${r.rate}%`, tip: `${store} · 상품쿠폰 최대 ${r.rate}% (가격 기록 기준, 쿠폰 이름·종료일 모름)\n${md(r.from)} ~ ${r.to >= today ? '진행중' : md(r.to)}` }));
-    runs.cut.forEach((r) => bars.push({ store, kind: 'cut', from: r.from, to: r.to, real: r.to, label: `${store} 가격인하 최대 ${r.rate}%`, tip: `${store} · 판매가 인하 최대 ${r.rate}% (기본 판매가 대비)\n${md(r.from)} ~ ${r.to >= today ? '진행중' : md(r.to)}` }));
+    runs.coupon.forEach((r) => bars.push({ store, kind: 'coupon', gk: 'pm', from: r.from, to: r.to, real: r.to, label: `${store} 쿠폰 최대 ${r.rate}%`, tip: `${store} · 상품쿠폰 최대 ${r.rate}% (가격 기록 기준, 쿠폰 이름·종료일 모름)\n${md(r.from)} ~ ${r.to >= today ? '진행중' : md(r.to)}` }));
+    runs.cut.forEach((r) => bars.push({ store, kind: 'cut', gk: 'cut', from: r.from, to: r.to, real: r.to, label: `${store} 가격인하 최대 ${r.rate}%`, tip: `${store} · 판매가 인하 최대 ${r.rate}% (기본 판매가 대비)\n${md(r.from)} ~ ${r.to >= today ? '진행중' : md(r.to)}` }));
   });
   bars.sort((a, b) => (a.from < b.from ? -1 : a.from > b.from ? 1 : (b.to > a.to ? 1 : -1)));
   promoBarsCache = bars;
   return bars;
 }
 // 달력용: 같은 스토어 쿠폰이 겹치거나 이어지면 한 줄로 묶음 (쿠폰 여러 개면 할인율 범위와 개수 표시)
-let promoDetail = false;
-try { promoDetail = localStorage.getItem('ohPromoDetail') === '1'; } catch (e) { /* 무시 */ }
-function promoBarsMerged() {
-  const all = promoBars();
-  if (promoDetail) return all;
+// 달력 행사 줄 보기 방식: store = 스토어마다 한 줄(행사 구성이 바뀌는 날 칸이 끊김), kind = 쿠폰 종류별, all = 쿠폰 하나씩
+let promoMode = 'store';
+try { promoMode = localStorage.getItem('ohPromoMode') || 'store'; } catch (e) { /* 무시 */ }
+// 묶기: 같은 스토어 안에서
+//  기간 쿠폰 = 이름과 할인율이 같은 것끼리만 한 줄 (이름이나 %가 다르면 따로)
+//  단발 쿠폰(오늘만 반짝 특가 등) = 스토어마다 한 줄 (⚡)
+//  가격 기록으로만 본 쿠폰, 판매가 인하 = 스토어마다 한 줄
+function groupBars(all) {
   const today = ymd(new Date());
   const addDays1 = (d, n) => { const x = toDate(d); x.setDate(x.getDate() + n); return ymd(x); };
   const out = [];
   const storeOrder = [];
   all.forEach((b) => { if (!storeOrder.includes(b.store)) storeOrder.push(b.store); });
+  const rank = (gk) => (gk.startsWith('p|') ? 0 : gk === 'flash' ? 1 : gk === 'pm' ? 2 : 3);
   storeOrder.forEach((store) => {
-    ['coupon', 'cut'].forEach((kind) => {
-      const bs = all.filter((b) => b.store === store && b.kind === kind).sort((a, b) => (a.from < b.from ? -1 : 1));
+    const gks = [...new Set(all.filter((b) => b.store === store).map((b) => b.gk || b.kind))].sort((a, b) => rank(a) - rank(b) || (a < b ? -1 : 1));
+    gks.forEach((gk) => {
+      const bs = all.filter((b) => b.store === store && (b.gk || b.kind) === gk).sort((a, b) => (a.from < b.from ? -1 : 1));
       let g = null;
       bs.forEach((b) => {
         if (g && b.from <= addDays1(g.to, 1)) {
@@ -1979,18 +1990,19 @@ function promoBarsMerged() {
           g.ext = g.ext || b.ext;
           g.parts.push(b);
         } else {
-          g = { store, kind, from: b.from, to: b.to, real: b.real, ext: b.ext, parts: [b] };
+          g = { store, kind: b.kind, gk, flash: gk === 'flash', from: b.from, to: b.to, real: b.real, ext: b.ext, parts: [b] };
           out.push(g);
         }
       });
     });
   });
   out.forEach((g) => {
-    if (g.kind === 'cut' || g.parts.length === 1) { Object.assign(g, { label: g.parts[0].label, tip: g.parts[0].tip }); return; }
-    const rates = [...new Set(g.parts.map((b) => Number((b.label.match(/(\d+)%/) || [])[1])).filter(Boolean))].sort((a, b) => a - b);
+    const rates = [...new Set(g.parts.map((b) => b.rate || Number((b.label.match(/(\d+)%/) || [])[1])).filter(Boolean))].sort((a, b) => a - b);
     const rt = !rates.length ? '' : rates.length <= 3 ? `${rates.join('·')}%` : `${rates[0]}~${rates[rates.length - 1]}%`;
-    g.label = `${g.store} 쿠폰 ${rt}`;
-    // 같은 이름, 같은 할인율 쿠폰은 한 줄로 (오늘만 반짝 특가처럼 매번 새로 나오는 쿠폰)
+    if (g.kind === 'cut' || (g.parts.length === 1 && !g.flash)) { Object.assign(g, { label: g.parts[0].label, tip: g.parts[0].tip }); return; }
+    if (g.gk.startsWith('p|')) g.label = g.parts[0].label;
+    else if (g.flash) g.label = `⚡ ${g.store} 단발 ${rt}`;
+    else g.label = `${g.store} 쿠폰 ${rt}`;
     const kinds = {};
     g.parts.forEach((b) => {
       const name = b.tip.split('\n')[0].replace(g.store + ' · ', '');
@@ -2000,9 +2012,59 @@ function promoBarsMerged() {
       if (b.from < kinds[k].from) kinds[k].from = b.from;
       if (b.to > kinds[k].to) kinds[k].to = b.to;
     });
-    g.tip = `${g.store} 쿠폰 ${rt} · ${md(g.from)} ~ ${md(g.to)}${g.real >= today ? ' 진행중' : ''}\n` + Object.values(kinds).map((x) => `· ${x.name} (${md(x.from)}~${md(x.to)}${x.n > 1 ? `, ${x.n}번 발급` : ''})`).join('\n');
+    const head = g.flash ? `${g.store} 단발 쿠폰 (하루, 반나절마다 새로 나오는 쿠폰) ${rt}` : g.gk.startsWith('p|') ? `${g.store} 기간 쿠폰` : `${g.store} 쿠폰 ${rt}`;
+    g.tip = `${head} · ${md(g.from)} ~ ${md(g.to)}${g.real >= today ? ' 진행중' : ''}\n` + Object.values(kinds).map((x) => `· ${x.name} (${md(x.from)}~${md(x.to)}${x.n > 1 ? `, ${x.n}번 발급` : ''})`).join('\n');
   });
   return out;
+}
+// 스토어마다 한 줄: 날짜마다 걸려 있는 행사 목록이 같으면 이어서 한 칸, 이름이나 %가 달라지는 날에 칸이 끊김
+function storeLines(all) {
+  const addDays1 = (d, n) => { const x = toDate(d); x.setDate(x.getDate() + n); return ymd(x); };
+  const tagOf = (b) => {
+    if (b.kind === 'cut') return { k: 'cut', t: `인하 ${(b.label.match(/(\d+)%/) || [])[1] || ''}%` };
+    if (b.flash) return { k: 'flash', r: b.rate || Number((b.label.match(/(\d+)%/) || [])[1]) || 0 };
+    if (b.gk === 'pm') return { k: 'pm', t: `쿠폰 ${(b.label.match(/(\d+)%/) || [])[1] || ''}%` };
+    return { k: 'p', t: `${b.rate ? b.rate + '%' : ''} ${b.short || ''}`.trim() };
+  };
+  const out = [];
+  const stores = [];
+  all.forEach((b) => { if (!stores.includes(b.store)) stores.push(b.store); });
+  stores.forEach((store) => {
+    const bs = all.filter((b) => b.store === store);
+    const from = bs.reduce((m, b) => (b.from < m ? b.from : m), bs[0].from);
+    const to = bs.reduce((m, b) => (b.to > m ? b.to : m), bs[0].to);
+    let seg = null;
+    for (let d = from; d <= to; d = addDays1(d, 1)) {
+      const on = bs.filter((b) => b.from <= d && b.to >= d);
+      if (!on.length) { seg = null; continue; }
+      const tags = on.map(tagOf);
+      const flashR = [...new Set(tags.filter((t) => t.k === 'flash').map((t) => t.r).filter(Boolean))].sort((a, b) => a - b);
+      const names = [...new Set(tags.filter((t) => t.k === 'p').map((t) => t.t))].sort();
+      if (flashR.length) names.push(`⚡단발 ${flashR.join('·')}%`);
+      names.push(...[...new Set(tags.filter((t) => t.k === 'pm').map((t) => t.t))].sort());
+      names.push(...[...new Set(tags.filter((t) => t.k === 'cut').map((t) => t.t))].sort());
+      const sig = names.join(' · ');
+      if (seg && seg.sig === sig) { seg.to = d; on.forEach((b) => seg.src.add(b)); continue; }
+      seg = { store, kind: tags.every((t) => t.k === 'cut') ? 'cut' : 'coupon', sig, from: d, to: d, src: new Set(on) };
+      out.push(seg);
+    }
+  });
+  const today = ymd(new Date());
+  out.forEach((g) => {
+    const src = [...g.src];
+    g.real = src.reduce((m, b) => (b.real > m ? b.real : m), '');
+    g.ext = src.some((b) => b.ext);
+    g.label = `${g.store} ${g.sig}`;
+    const lines = [...new Set(src.map((b) => '· ' + b.tip.split('\n')[0].replace(g.store + ' · ', '')))];
+    g.tip = `${g.store} · ${md(g.from)} ~ ${md(g.to)}${g.to >= today ? ' (진행중이거나 종료 예정)' : ''}\n${lines.slice(0, 15).join('\n')}${lines.length > 15 ? `\n· 외 ${lines.length - 15}개` : ''}`;
+  });
+  return out;
+}
+function promoBarsMerged() {
+  const all = promoBars();
+  if (promoMode === 'all') return all;
+  if (promoMode === 'kind') return groupBars(all);
+  return storeLines(all);
 }
 function storeColor(store) {
   const it = items.find((x) => x.store === store);
@@ -2013,7 +2075,7 @@ function storeColor(store) {
 function renderPromoHist() {
   const el = document.getElementById('promoHist');
   if (!el) return;
-  const bars = promoBars();
+  const bars = groupBars(promoBars());
   if (!bars.length) { el.innerHTML = ''; return; }
   const today = ymd(new Date());
   const y = calMonth.getFullYear();
@@ -2030,13 +2092,13 @@ function renderPromoHist() {
   const matRows = stores.map((st) => `<tr><td><span class="ph-sw" style="background:${storeColor(st)}"></span>${esc(st)}</td>${mat[st].map((set) => `<td class="c">${set.size || ''}</td>`).join('')}<td class="c"><b>${mat[st].reduce((n, x) => n + x.size, 0) || ''}</b></td></tr>`).join('');
   const rows = bars.slice().sort((a, b) => (a.from < b.from ? 1 : -1)).map((b) => {
     const live = b.to >= today;
-    return `<tr><td>${b.from.slice(0, 4)}.${md(b.from)} ~ ${b.to.slice(0, 4) !== b.from.slice(0, 4) ? b.to.slice(0, 4) + '.' : ''}${md(b.to)}</td><td><span class="ph-sw" style="background:${b.kind === 'cut' ? '#ea580c' : storeColor(b.store)}"></span>${esc(b.store)}</td><td>${esc(b.tip.split('\n')[0].replace(b.store + ' · ', ''))}</td><td class="num">${dayCount(b)}일</td><td>${live ? (b.to > today ? `진행중 (${md(b.to)} 종료 예정)` : '진행중') : '종료'}${b.ext ? ' · 연장' : ''}</td></tr>`;
+    return `<tr><td>${b.from.slice(0, 4)}.${md(b.from)} ~ ${b.to.slice(0, 4) !== b.from.slice(0, 4) ? b.to.slice(0, 4) + '.' : ''}${md(b.to)}</td><td><span class="ph-sw" style="background:${b.kind === 'cut' ? '#ea580c' : storeColor(b.store)}"></span>${esc(b.store)}</td><td>${b.kind === 'cut' ? '판매가 인하' : b.flash ? '⚡ 단발 쿠폰' : b.gk === 'pm' ? '쿠폰 (이름 모름)' : '기간 쿠폰'}</td><td title="${esc(b.tip)}">${esc(b.flash || b.gk === 'pm' ? b.label.replace('⚡ ', '').replace(b.store + ' ', '') : b.tip.split('\n')[0].replace(b.store + ' · ', '').replace(b.store + ' 기간 쿠폰 · ', ''))}${b.parts && b.parts.length > 1 ? ` <span class="small">(${b.parts.length}번 발급)</span>` : ''}</td><td class="num">${dayCount(b)}일</td><td>${live ? (b.to > today ? `진행중 (${md(b.to)} 종료 예정)` : '진행중') : '종료'}${b.ext ? ' · 연장' : ''}</td></tr>`;
   }).join('');
   el.innerHTML = `<details class="calc-sec" style="margin-top:12px" open><summary style="cursor:pointer">${y}년 월별 행사 일수 (위에서 고른 스토어 기준)</summary>
     <table class="ph-tbl ph-mat"><tr><th>스토어</th>${Array.from({ length: 12 }, (_, i) => `<th class="num" style="text-align:center">${i + 1}월</th>`).join('')}<th style="text-align:center">합계</th></tr>${matRows}</table>
     <div class="small" style="white-space:normal">쿠폰이나 판매가 인하가 걸려 있던 날짜 수예요. 달력에서 연도를 넘기면 그 해 기준으로 바뀌어요.</div></details>
     <details class="calc-sec" style="margin-top:8px"><summary style="cursor:pointer">행사 기록 전체 ${bars.length}건 (최근 순, 영구 보관)</summary>
-    <table class="ph-tbl"><tr><th>기간</th><th>스토어</th><th>내용</th><th class="num">일수</th><th>상태</th></tr>${rows}</table></details>`;
+    <table class="ph-tbl"><tr><th>기간</th><th>스토어</th><th>종류</th><th>내용</th><th class="num">일수</th><th>상태</th></tr>${rows}</table></details>`;
 }
 function dayHasPromo(day) {
   return items.some((it) => matchFilter(it) && (promoInfo(it.key, day) || {}).promo);

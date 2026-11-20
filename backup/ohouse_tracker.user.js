@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         오늘의집 판매량 추적기
 // @namespace    ohouse-stock-tracker
-// @version      1.6
+// @version      1.7
 // @description  오늘의집 상품 옵션별 재고를 매시간 읽어서 판매추정을 깃허브 ohouse 폴더에 기록 (네이버용 추적기와 따로 동작)
 // @match        https://store.ohou.se/*
 // @match        https://ds4eqm-lgtm.github.io/competitor-stock/ohouse/*
@@ -346,15 +346,17 @@
     await updateJsonFile(`${DIR}data/promos.json`, (pr) => {
       pr.coupons = pr.coupons || {};
       entries.forEach((en) => en.options.forEach((opt) => (opt.plans || []).forEach(([id, amt]) => {
-        const m = pr.coupons[id] || (pr.coupons[id] = { first: runStart[en.productNo] || en.nowKey, stores: {}, pids: {} });
+        // 처음 본 시각 = 시작일 (seen 은 한 번 정하면 안 바꿈)
+        const m = pr.coupons[id] || (pr.coupons[id] = { first: en.nowKey, seen: en.nowKey, stores: {}, pids: {} });
+        if (!m.seen) m.seen = m.first || en.nowKey;
         if (!m.last || en.nowKey > m.last) m.last = en.nowKey;
-        if (runStart[en.productNo] && runStart[en.productNo] < m.first) m.first = runStart[en.productNo];
         m.stores[en.storeName] = 1;
         m.pids[en.productNo] = 1;
         if (!m.r && opt.price > 0 && amt > 0) m.r = Math.round((amt / opt.price) * 100);
       })));
       Object.entries(couponInfo || {}).forEach(([id, c]) => {
-        const m = pr.coupons[id] || (pr.coupons[id] = { first: stamp, stores: {}, pids: {} });
+        const m = pr.coupons[id] || (pr.coupons[id] = { first: stamp, seen: stamp, stores: {}, pids: {} });
+        if (!m.seen) m.seen = m.first || stamp;
         if (!m.last || stamp > m.last) m.last = stamp;
         Object.assign(m.stores, c.stores || {});
         Object.assign(m.pids, c.pids || {});
