@@ -2483,5 +2483,106 @@ setInterval(async () => {
 // 10분마다 최신 데이터로 자동 새로고침 (두 컴퓨터 화면이 계속 같게)
 setInterval(() => { loadData(true).catch(() => {}); }, 10 * 60 * 1000);
 </script>
+<!-- ---------------- 실시간 접속자 (파이어베이스 serogochim-inventory 의 dashPresence 칸만 씀, 재고 데이터와 별개) ---------------- -->
+<style>
+  #viewerBar { display:flex; flex-wrap:wrap; align-items:center; gap:6px; padding:6px 12px; background:#f0fdf4; border-bottom:1px solid #bbf7d0; font-size:13px; color:#166534; }
+  #viewerBar .vb-t { font-weight:800; margin-right:4px; }
+  #viewerBar .vb-u { display:inline-flex; align-items:center; gap:5px; background:#fff; border:1px solid #bbf7d0; border-radius:999px; padding:2px 10px; color:#14532d; font-weight:600; }
+  #viewerBar .vb-u::before { content:''; width:8px; height:8px; border-radius:50%; background:#22c55e; box-shadow:0 0 0 2px #dcfce7; }
+  #viewerBar .vb-u.me { border-color:#16a34a; }
+  #viewerBar .vb-p { font-weight:400; color:#4d7c0f; font-size:11px; }
+  #viewerBar .vb-r { margin-left:auto; color:#4b5563; }
+  #viewerBar a { color:#166534; }
+  #nameGate { position:fixed; inset:0; z-index:99999; background:rgba(17,24,39,.72); display:flex; align-items:center; justify-content:center; padding:16px; }
+  #nameGate .ng { background:#fff; border-radius:12px; padding:24px; width:100%; max-width:360px; box-shadow:0 10px 30px rgba(0,0,0,.3); }
+  #nameGate h3 { margin:0 0 6px; font-size:18px; }
+  #nameGate p { margin:0 0 14px; font-size:13px; color:#555; line-height:1.5; }
+  #nameGate input { width:100%; box-sizing:border-box; font-size:16px; padding:10px 12px; border:1px solid #ccc; border-radius:8px; }
+  #nameGate button { width:100%; margin-top:10px; padding:10px; font-size:15px; font-weight:700; border:0; border-radius:8px; background:#111; color:#fff; cursor:pointer; }
+</style>
+<script type="module">
+  const PAGE = '네이버';
+  const AUTO = ['#flush', '#flushfine', '#ohcollect', '#ohcollect-fine'].includes(location.hash); // 자동조회 화면은 접속자에서 뺌
+  const ALIVE_MS = 120000;   // 2분 안에 신호가 온 사람만 '보는 중'
+  const BEAT_MS = 45000;     // 45초마다 신호
+  const getName = () => { try { return (localStorage.getItem('viewerName') || '').trim(); } catch (e) { return ''; } };
+  const setName = (n) => { try { localStorage.setItem('viewerName', n); } catch (e) { /* 무시 */ } };
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  // 처음 켤 때 이름을 넣어야 볼 수 있음 (이 컴퓨터 크롬에 기억됨)
+  function askName(force) {
+    return new Promise((resolve) => {
+      const cur = getName();
+      if (cur && !force) { resolve(cur); return; }
+      const g = document.createElement('div');
+      g.id = 'nameGate';
+      g.innerHTML = `<div class="ng"><h3>이름을 입력해 주세요</h3><p>대시보드를 보려면 이름이 필요해요. 위쪽에 지금 누가 보고 있는지 이 이름으로 표시돼요.</p><input id="ngIn" maxlength="20" placeholder="예: 김희상" value="${esc(cur)}"><button id="ngBtn">확인</button></div>`;
+      document.body.appendChild(g);
+      const inp = g.querySelector('#ngIn');
+      const done = () => { const v = inp.value.trim(); if (!v) { inp.focus(); return; } setName(v); g.remove(); resolve(v); };
+      g.querySelector('#ngBtn').onclick = done;
+      inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') done(); });
+      setTimeout(() => inp.focus(), 50);
+    });
+  }
+
+  async function start() {
+    if (AUTO) return;
+    let name = await askName(false);
+    const bar = document.createElement('div');
+    bar.id = 'viewerBar';
+    bar.innerHTML = '<span class="vb-t">지금 보는 사람</span><span class="small">연결 중...</span>';
+    document.body.insertBefore(bar, document.body.firstChild);
+    let sid = '';
+    try { sid = sessionStorage.getItem('viewerSid') || ''; } catch (e) { /* 무시 */ }
+    if (!sid) { sid = Date.now().toString(36) + Math.random().toString(36).slice(2, 8); try { sessionStorage.setItem('viewerSid', sid); } catch (e) { /* 무시 */ } }
+
+    let fb;
+    try {
+      const appMod = await import('https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js');
+      const fsMod = await import('https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js');
+      const app = appMod.getApps().find((a) => a.name === 'presence') || appMod.initializeApp({
+        apiKey: 'AIzaSyCNpACKBrRc4e0aZcy4yindQPIHSMcOp50',
+        authDomain: 'serogochim-inventory.firebaseapp.com',
+        projectId: 'serogochim-inventory',
+        appId: '1:881089077673:web:9981db337464535f1ee4b8',
+      }, 'presence');
+      fb = { db: fsMod.getFirestore(app), ...fsMod };
+    } catch (e) {
+      bar.innerHTML = '<span class="vb-t">지금 보는 사람</span><span>접속자 표시를 불러오지 못했어요 (인터넷 연결 확인)</span>';
+      return;
+    }
+    const { db, doc, setDoc, deleteDoc, collection, onSnapshot } = fb;
+    const me = doc(db, 'dashPresence', sid);
+    const since = Date.now();
+    let lastErr = '';
+    const beat = () => setDoc(me, { name, page: PAGE, ts: Date.now(), since }).then(() => { lastErr = ''; }).catch((e) => { lastErr = String((e && e.code) || e); render(); });
+    beat();
+    setInterval(() => { if (document.visibilityState === 'visible') beat(); }, BEAT_MS);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') beat(); });
+    window.addEventListener('pagehide', () => { deleteDoc(me).catch(() => {}); });
+
+    let docs = [];
+    const render = () => {
+      const now = Date.now();
+      if (lastErr) { bar.innerHTML = `<span class="vb-t">지금 보는 사람</span><span>접속자 표시 연결이 안 돼요 (${esc(lastErr)})</span>`; return; }
+      const alive = docs.filter((d) => now - (Number(d.ts) || 0) < ALIVE_MS);
+      const byName = {};
+      alive.forEach((d) => { const n = String(d.name || '이름없음'); (byName[n] = byName[n] || new Set()).add(d.page || ''); });
+      const names = Object.keys(byName).sort((a, b) => (a === name ? -1 : b === name ? 1 : a.localeCompare(b, 'ko')));
+      bar.innerHTML = `<span class="vb-t">지금 보는 사람 ${names.length}명</span>` +
+        names.map((n) => `<span class="vb-u${n === name ? ' me' : ''}">${esc(n)}${n === name ? ' (나)' : ''} <span class="vb-p">${[...byName[n]].filter(Boolean).map(esc).join('·')}</span></span>`).join('') +
+        `<span class="vb-r">${esc(name)}(으)로 보는 중 · <a href="#" id="vbRename">이름 바꾸기</a></span>`;
+      const rn = document.getElementById('vbRename');
+      if (rn) rn.onclick = async (e) => { e.preventDefault(); name = await askName(true); beat(); render(); };
+      // 하루 넘게 신호 없는 기록은 정리 (창을 그냥 닫아서 남은 것)
+      docs.filter((d) => now - (Number(d.ts) || 0) > 86400000).slice(0, 10).forEach((d) => deleteDoc(doc(db, 'dashPresence', d.id)).catch(() => {}));
+    };
+    onSnapshot(collection(db, 'dashPresence'), (snap) => { docs = snap.docs.map((d) => Object.assign({ id: d.id }, d.data())); render(); },
+      (e) => { lastErr = String((e && e.code) || e); render(); });
+    setInterval(render, 15000);
+  }
+  start();
+</script>
 </body>
 </html>
