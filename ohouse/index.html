@@ -516,6 +516,13 @@ function setModeLabel() {
 window.addEventListener('message', (ev) => {
   const m = ev.data;
   if (!m || m.from !== 'oh-tracker') return;
+  if (m.type === 'secretsSaved' && m.ok) { setTimeout(() => location.reload(), 300); return; }
+  // 추적기 1.8: 새로 깐 추적기에 토큰이 비어 있으면 이 크롬에 저장된 연결 코드를 넘겨줌
+  if (m.type === 'pong' && m.trackerVersion && !m.token) {
+    let saved = '';
+    try { saved = localStorage.getItem('ghToken') || ''; } catch (e) { /* 무시 */ }
+    if (saved && !window.__ohSetTried) { window.__ohSetTried = true; sendToTracker({ type: 'setSecrets', token: saved }); return; }
+  }
   if (m.type === 'pong' && !bridgeOk) {
     bridgeOk = true;
     // 관리용 컴퓨터는 탬퍼몽키의 토큰으로 읽기도 해서 항상 최신 데이터를 봄 (메모리에만 두고 저장 안 함)

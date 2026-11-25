@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         오늘의집 판매량 추적기
 // @namespace    ohouse-stock-tracker
-// @version      1.7
+// @version      1.8
 // @description  오늘의집 상품 옵션별 재고를 매시간 읽어서 판매추정을 깃허브 ohouse 폴더에 기록 (네이버용 추적기와 따로 동작)
 // @match        https://store.ohou.se/*
 // @match        https://ds4eqm-lgtm.github.io/competitor-stock/ohouse/*
@@ -14,13 +14,21 @@
 // @connect      api.github.com
 // @connect      store.ohou.se
 // @run-at       document-start
+// @updateURL    https://raw.githubusercontent.com/ds4eqm-lgtm/competitor-stock/main/backup/ohouse_tracker.user.js
+// @downloadURL  https://raw.githubusercontent.com/ds4eqm-lgtm/competitor-stock/main/backup/ohouse_tracker.user.js
 // ==/UserScript==
 
 (function () {
   'use strict';
 
   // ---------------- 여기 세줄만 본인 값으로 바꾸기 (토큰은 네이버용 스크립트와 같은 값) ----------------
-  const GITHUB_TOKEN = "";
+  const GITHUB_TOKEN_INPUT = "";
+  // 1.8부터: 토큰은 한 번 넣으면 탬퍼몽키 저장소에 보관 → 깃허브에서 새 판이 저절로 깔려도 그대로 씀. 대시보드가 넣어 줄 수도 있음
+  let GITHUB_TOKEN = GITHUB_TOKEN_INPUT;
+  try {
+    if (GITHUB_TOKEN_INPUT) GM_setValue('saved_github_token', GITHUB_TOKEN_INPUT);
+    else GITHUB_TOKEN = GM_getValue('saved_github_token', '') || '';
+  } catch (e) { /* 무시 */ }
   const GITHUB_OWNER = "ds4eqm-lgtm";
   const GITHUB_REPO = "competitor-stock";
   // ---------------------------------------------------------------
@@ -717,7 +725,15 @@
     window.addEventListener('message', async (ev) => {
       const m = ev.data;
       if (!m || m.from !== 'oh-dashboard') return;
-      if (m.type === 'ping') { reply({ type: 'pong', token: GITHUB_TOKEN }); return; }
+      if (m.type === 'ping') { reply({ type: 'pong', token: GITHUB_TOKEN, trackerVersion: '1.8' }); return; }
+      if (m.type === 'setSecrets') {
+        try {
+          const t = String(m.token || '').trim();
+          if (t) GM_setValue('saved_github_token', t);
+          reply({ type: 'secretsSaved', ok: !!t });
+        } catch (e) { reply({ type: 'secretsSaved', ok: false }); }
+        return;
+      }
       if (m.type === 'approve') {
         try {
           let result = {};
