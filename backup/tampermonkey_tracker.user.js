@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         스마트스토어 판매량 추적기
 // @namespace    competitor-stock-tracker
-// @version      5.2
+// @version      5.3
 // @description  상품페이지가 스스로 불러오는 옵션별 재고 데이터를 읽어서 옵션 단위로 판매추정을 깃허브에 자동 기록
 // @match        https://smartstore.naver.com/*/products/*
 // @match        https://brand.naver.com/*/products/*
@@ -16,15 +16,26 @@
 // @connect      api.github.com
 // @connect      ntfy.sh
 // @run-at       document-start
+// @updateURL    https://raw.githubusercontent.com/ds4eqm-lgtm/competitor-stock/main/backup/tampermonkey_tracker.user.js
+// @downloadURL  https://raw.githubusercontent.com/ds4eqm-lgtm/competitor-stock/main/backup/tampermonkey_tracker.user.js
 // ==/UserScript==
 (function () {
   'use strict';
   // ---------------- 여기 값만 본인 값으로 바꾸기 (23번째 줄 토큰, 26번째 줄 휴대폰 알림 이름) ----------------
-  const GITHUB_TOKEN = "";
+  const GITHUB_TOKEN_INPUT = "";
   const GITHUB_OWNER = "ds4eqm-lgtm";
   const GITHUB_REPO = "competitor-stock";
-  const NTFY_TOPIC = ""; // 휴대폰 알림 주소 이름 (ntfy 앱에서 구독한 이름, 비워두면 알림 안 보냄)
+  const NTFY_TOPIC_INPUT = ""; // 모바일 폰 알림 주소 이름 (ntfy 앱에서 구독한 이름, 비워두면 알림 안 보냄)
   // ---------------------------------------------------------------
+  // Ver5.3부터: 한 번 넣은 토큰·알림 이름은 탬퍼몽키 저장소에 보관 → 깃허브에서 새 판이 저절로 깔려도(토큰 빈칸) 그대로 씀
+  function keepSecret(name, typed) {
+    try {
+      if (typed) { GM_setValue(name, typed); return typed; }
+      return GM_getValue(name, '') || '';
+    } catch (e) { return typed || ''; }
+  }
+  const GITHUB_TOKEN = keepSecret('saved_github_token', GITHUB_TOKEN_INPUT);
+  const NTFY_TOPIC = keepSecret('saved_ntfy_topic', NTFY_TOPIC_INPUT);
 
   const DAY_START_HOUR = 7;  // 하루 시작 (07:00 ~ 다음날 07:00)
   const SPLIT_HOUR = 16;     // 감소가 시작된 기록이 07~15시면 2타임(오후물량, 08~16시 조회), 16시~다음날 06시면 1타임(아침물량, 17~07시 조회)
@@ -53,23 +64,66 @@
       } catch (e) { resolve(false); }
     });
   }
+  // Ver5.3: 상품 하나만 로그인을 요구하는 경우(성인 인증, 회원 전용, 판매 중지 등)에는 그 상품만 6시간 건너뜀
+  // 서로 다른 상품 3개가 15분 안에 로그인 화면으로 가면 그때만 진짜 로그인 풀림으로 보고 전체 1시간 쉼
+  // (Ver5.2까지는 상품 하나가 로그인을 요구해도 전체를 1시간 쉬어서, 10번째 상품 뒤로 수집이 모두 멈췄음)
+  const SKIP_ONE_MS = 6 * 60 * 60000;
+  const LOGIN_HIT_WINDOW_MS = 15 * 60000;
+  const LOGIN_DISTINCT_FOR_BLOCK = 3;
+  function productFromLoginUrl() {
+    // 로그인 화면 주소의 url=... 안에 원래 상품 주소가 들어 있음
+    let text = window.location.href;
+    for (let i = 0; i < 3; i++) { try { text = decodeURIComponent(text); } catch (e) { break; } }
+    const m = text.match(/(smartstore|brand)\.naver\.com\/([A-Za-z0-9_-]+)\/products\/(\d+)/);
+    return m ? { slug: m[2], no: m[3], url: `https://${m[1]}.naver.com/${m[2]}/products/${m[3]}` } : null;
+  }
   if (window.location.hostname === 'nid.naver.com') {
     const h = window.location.hash;
-    if (h === '#autotrack' || h === '#autotrack-fine') {
-      // 처음 막힌 순간에만 휴대폰 알림 (쉬는 1시간 동안은 다시 안 보냄)
-      let already = false;
-      try { already = (GM_getValue('login_block_until', 0) || 0) > Date.now(); } catch (e) { /* 무시 */ }
-      try {
-        GM_setValue('login_block_until', Date.now() + LOGIN_PAUSE_MS);
-        GM_setValue('login_block_at', Date.now());
-        GM_setValue('login_block_count', (GM_getValue('login_block_count', 0) || 0) + 1);
-      } catch (e) { /* 무시 */ }
-      console.log('[판매량추적] 네이버 로그인 화면으로 넘어감, 1시간 자동조회 쉼');
+    const fromHash = h === '#autotrack' || h === '#autotrack-fine';
+    let prod = productFromLoginUrl();
+    if (fromHash || prod) {
       try { window.stop(); } catch (e) { /* 무시 */ }
-      if (already) { setTimeout(() => window.close(), 300); return; }
+    }
+    if (fromHash) {
+      const now = Date.now();
       const d = new Date();
       const hm = `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
       const done = () => setTimeout(() => window.close(), 300);
+      let hits = [], skip = {};
+      try {
+        hits = (GM_getValue('login_hits', []) || []).filter((x) => now - x.at < LOGIN_HIT_WINDOW_MS);
+        skip = GM_getValue('login_skip', {}) || {};
+      } catch (e) { /* 무시 */ }
+      hits.push({ at: now, no: prod ? prod.no : '?' + now });
+      const distinct = new Set(hits.map((x) => x.no)).size;
+      try { GM_setValue('login_hits', hits); } catch (e) { /* 무시 */ }
+
+      if (prod && distinct < LOGIN_DISTINCT_FOR_BLOCK) {
+        // 이 상품만 건너뜀, 나머지 상품은 계속 조회
+        const first = !skip[prod.no] || (skip[prod.no].until || 0) < now - SKIP_ONE_MS;
+        skip[prod.no] = { until: now + SKIP_ONE_MS, at: now, url: prod.url, count: ((skip[prod.no] && skip[prod.no].count) || 0) + 1 };
+        try { GM_setValue('login_skip', skip); } catch (e) { /* 무시 */ }
+        console.log('[판매량추적] 이 상품만 로그인을 요구함, 6시간 건너뜀:', prod.url);
+        if (!first) { done(); return; }
+        setTimeout(done, 9000);
+        notifyPhone('상품 1개 로그인 요구', `${hm} ${prod.url} 상품만 네이버가 로그인 화면으로 보냈어요. 다른 상품은 계속 모으고, 이 상품만 6시간마다 다시 시도해요. 판매 중지·성인 인증·회원 전용 상품인지 확인해 주세요.`).then(done);
+        return;
+      }
+
+      // 여러 상품이 한꺼번에 로그인 화면으로 감 → 진짜 로그인 풀림, 전체 1시간 쉼
+      let already = false;
+      try { already = (GM_getValue('login_block_until', 0) || 0) > now; } catch (e) { /* 무시 */ }
+      try {
+        // 방금 하나씩 건너뛰기로 넣은 상품들은 로그인 풀림 때문이었으니 건너뛰기에서 뺌
+        Object.keys(skip).forEach((k) => { if (now - (skip[k].at || 0) < LOGIN_HIT_WINDOW_MS) delete skip[k]; });
+        GM_setValue('login_skip', skip);
+        GM_setValue('login_hits', []);
+        GM_setValue('login_block_until', now + LOGIN_PAUSE_MS);
+        GM_setValue('login_block_at', now);
+        GM_setValue('login_block_count', (GM_getValue('login_block_count', 0) || 0) + 1);
+      } catch (e) { /* 무시 */ }
+      console.log('[판매량추적] 네이버 로그인 화면으로 넘어감, 1시간 자동조회 쉼');
+      if (already) { done(); return; }
       setTimeout(done, 9000); // 알림이 늦어도 9초 뒤에는 닫음
       notifyPhone('네이버 로그인 풀림', `${hm} 네이버가 자동조회를 로그인 화면으로 보냈어요. 수집 PC 크롬에서 네이버 로그인(로그인 상태 유지) 후 대시보드에서 쉬기 풀기를 눌러주세요. 그전까지 1시간마다 다시 시도해요.`).then(done);
     }
@@ -159,6 +213,17 @@
     try { lu = GM_getValue('login_block_until', 0) || 0; } catch (e) { /* 무시 */ }
     if (lu > Date.now()) {
       console.log('[판매량추적] 네이버 로그인 요구로 쉬는 중이라 바로 닫음');
+      try { window.stop(); } catch (e) { /* 무시 */ }
+      finished = true;
+      closeAutoTab();
+      return;
+    }
+  }
+  if (autoMode && productNo) {
+    let sk = null;
+    try { sk = (GM_getValue('login_skip', {}) || {})[productNo]; } catch (e) { /* 무시 */ }
+    if (sk && sk.until > Date.now()) {
+      console.log('[판매량추적] 이 상품은 로그인을 요구해서 잠시 건너뜀');
       try { window.stop(); } catch (e) { /* 무시 */ }
       finished = true;
       closeAutoTab();
@@ -606,6 +671,10 @@
     handled = true;
     try { sessionStorage.removeItem('autotrack_retry'); } catch (e) { /* 무시 */ }
     if (isSmartstore && autoMode && !fineMode) { try { GM_setValue('ss_fail_times', []); } catch (e) { /* 무시 */ } }
+    try {
+      const sk = GM_getValue('login_skip', {}) || {};
+      if (sk[productNo]) { delete sk[productNo]; GM_setValue('login_skip', sk); }
+    } catch (e) { /* 무시 */ }
 
     if (document.readyState === 'loading') {
       await new Promise((r) => document.addEventListener('DOMContentLoaded', r));
@@ -788,7 +857,10 @@
       if (m.type === 'ping') {
         let lb = 0, lu = 0;
         try { lb = GM_getValue('login_block_at', 0) || 0; lu = GM_getValue('login_block_until', 0) || 0; } catch (e) { /* 무시 */ }
-        reply({ type: 'pong', token: GITHUB_TOKEN, loginBlockAt: lb, loginBlockUntil: lu });
+        let skip = {};
+        try { skip = GM_getValue('login_skip', {}) || {}; } catch (e) { /* 무시 */ }
+        const skipList = Object.values(skip).filter((x) => x && x.until > Date.now());
+        reply({ type: 'pong', token: GITHUB_TOKEN, loginBlockAt: lb, loginBlockUntil: lu, loginSkip: skipList, trackerVersion: '5.3' });
         return;
       }
       if (m.type === 'testNotify') {
@@ -797,7 +869,7 @@
         return;
       }
       if (m.type === 'clearLoginBlock') {
-        try { GM_setValue('login_block_until', 0); GM_setValue('login_block_at', 0); } catch (e) { /* 무시 */ }
+        try { GM_setValue('login_block_until', 0); GM_setValue('login_block_at', 0); GM_setValue('login_skip', {}); GM_setValue('login_hits', []); } catch (e) { /* 무시 */ }
         reply({ type: 'loginBlockCleared' });
         return;
       }

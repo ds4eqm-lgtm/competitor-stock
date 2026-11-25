@@ -27,6 +27,24 @@ def newest_full(path):
     return best
 
 
+PARTIAL_RATIO = 0.5   # 최근 전체 조회 상품 수가 지난 하루 최대치의 절반보다 적으면 "일부만 수집" 알림
+
+
+def product_counts(path):
+    """시각별로 몇 개 상품을 모았는지 센다 (키 = 채널_상품번호_옵션)"""
+    d = json.load(open(path, encoding="utf-8"))
+    counts = {}
+    for key, rec in d.items():
+        if not isinstance(rec, dict):
+            continue
+        parts = key.split("_")
+        pid = parts[1] if len(parts) > 1 else key
+        for t in rec:
+            if len(t) >= 16 and t[4] == "-":
+                counts.setdefault(t[:16], set()).add(pid)
+    return {t: len(v) for t, v in counts.items()}
+
+
 def fine_meta(path):
     try:
         d = json.load(open(path, encoding="utf-8"))
@@ -77,6 +95,20 @@ def main():
             if should_alert(lag, FULL_LIMIT_MIN):
                 problems.append((f"{name} 전체 조회 멈춤",
                                  f"{name} 전체 조회가 {int(lag // 60)}시간 {int(lag % 60)}분째 없어요. 최근 {full.replace('T', ' ')}. 수집 컴퓨터 꺼짐, 크롬 닫힘, 로그인 풀림을 확인해 주세요."))
+        if full:
+            try:
+                counts = product_counts(f"{base}/history.json")
+                newest = to_dt(full)
+                recent = [n for t, n in counts.items() if timedelta(0) < newest - to_dt(t) <= timedelta(hours=24)]
+                now_n = counts.get(full[:16], 0)
+                best = max(recent) if recent else 0
+                print(name, "최근 상품 수", now_n, "지난 하루 최대", best)
+                lag_p = (now - newest).total_seconds() / 60
+                if best and now_n < best * PARTIAL_RATIO and lag_p < 35:
+                    problems.append((f"{name} 일부만 수집",
+                                     f"{name} {full.replace('T', ' ')} 조회에서 상품 {now_n}개만 모였어요 (평소 {best}개). 특정 상품이 로그인을 요구하거나 크롬 탭이 막혔는지 확인해 주세요."))
+            except Exception as e:
+                print(name, "상품 수 점검 실패", e)
         fine, store = fine_meta(f"{base}/history_fine.json")
         if fine:
             # 새벽 0시~6시는 10분 조회를 쉬는 시간이라 6시부터 센다
