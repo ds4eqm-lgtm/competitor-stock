@@ -522,6 +522,19 @@ window.addEventListener('message', (ev) => {
     let saved = '';
     try { saved = localStorage.getItem('ghToken') || ''; } catch (e) { /* 무시 */ }
     if (saved && !window.__ohSetTried) { window.__ohSetTried = true; sendToTracker({ type: 'setSecrets', token: saved }); return; }
+    if (!saved && !document.getElementById('tokenSetup')) {
+      // 저장된 연결 코드가 없으면 붙여넣을 칸을 보여줌 (네이버 대시보드 [다른 컴퓨터 연결 코드 복사]로 복사한 값)
+      const el = document.createElement('div');
+      el.id = 'tokenSetup';
+      el.style.cssText = 'padding:12px 16px;font-size:15px;color:#fff;background:#1d4ed8;line-height:1.8';
+      el.innerHTML = `<b>오늘의집 추적기 Ver${m.trackerVersion} 설치 마무리</b> · 연결 코드를 붙여넣고 저장을 눌러 주세요 (한 번만)<br>연결 코드 <input id="tsTok" type="password" style="width:320px;padding:4px" placeholder="Ctrl+V"> <button id="tsSave" style="margin-left:8px;padding:4px 12px;font-weight:700;border:0;border-radius:6px;cursor:pointer">저장</button>`;
+      document.body.insertBefore(el, document.body.firstChild);
+      document.getElementById('tsSave').onclick = () => {
+        const token = document.getElementById('tsTok').value.trim();
+        if (!token) { alert('연결 코드를 붙여넣어 주세요.'); return; }
+        sendToTracker({ type: 'setSecrets', token });
+      };
+    }
   }
   if (m.type === 'pong' && !bridgeOk) {
     bridgeOk = true;
