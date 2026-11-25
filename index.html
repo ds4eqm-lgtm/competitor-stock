@@ -279,6 +279,37 @@
   </div>
 
 <script>
+// ---------------- 2026-11-26 임시 원격 조치 (수집 PC 추적기가 5.2인 동안만) ----------------
+// 5.2는 상품 하나(arving)가 로그인 화면으로 가도 네이버 자동조회 전체를 1시간 쉬어서 9개만 모임.
+// 수집 PC가 10분마다 여는 #flushfine 화면에서: 올리기가 끝나면 #clearblock 화면으로 넘어가 추적기에 '쉬기 풀기'를 보내고,
+// 다시 #flushfine 으로 돌아가(올릴 것 없음 → 추적기가 탭을 닫음) 탭이 쌓이지 않게 함. 추적기 5.3 이상이면 아무것도 안 함.
+(function remoteUnblock() {
+  const base = location.origin + location.pathname;
+  const h = location.hash;
+  const q = new URLSearchParams(location.search);
+  if (h === '#flushfine' && !q.get('cb')) {
+    const t0 = Date.now();
+    const iv = setInterval(() => {
+      const txt = (document.body && document.body.innerText) || '';
+      if (/업로드 완료|올릴 결과 없음|업로드 실패/.test(txt)) { clearInterval(iv); location.replace(base + '?cb=1#clearblock'); }
+      else if (Date.now() - t0 > 150000) clearInterval(iv);
+    }, 400);
+  } else if (h === '#clearblock') {
+    const back = () => location.replace(base + '?cb=2#flushfine');
+    window.addEventListener('message', (ev) => {
+      const m = ev.data;
+      if (!m || m.from !== 'cs-tracker') return;
+      if (m.type === 'pong' && 'loginBlockUntil' in m) {
+        if (m.trackerVersion) { back(); return; }          // 새 판이면 필요 없음
+        window.postMessage({ from: 'cs-dashboard', type: 'clearLoginBlock' }, '*');
+      }
+      if (m.type === 'loginBlockCleared') back();
+    });
+    const ping = () => window.postMessage({ from: 'cs-dashboard', type: 'ping' }, '*');
+    setTimeout(ping, 800); setTimeout(ping, 2500);
+    setTimeout(back, 12000); // 추적기가 대답이 없어도 12초 뒤 돌아가서 탭이 닫히게 함
+  }
+})();
 const DAY_START_HOUR = 7;  // 하루 시작 (07:00 ~ 다음날 07:00)
 // 재고 감소는 '감소가 시작된 기록 시각'으로 나눔 (= 줄어든 걸 확인한 기록은 그 다음 시각)
 // 2타임(오후물량) = 08시~16시 조회에서 확인된 감소 9번 (07→08 ... 15→16)
@@ -2546,7 +2577,7 @@ setInterval(() => { loadData(true).catch(() => {}); }, 10 * 60 * 1000);
 </style>
 <script type="module">
   const PAGE = '네이버';
-  const AUTO = ['#flush', '#flushfine', '#ohcollect', '#ohcollect-fine'].includes(location.hash); // 자동조회 화면은 접속자에서 뺌
+  const AUTO = ['#flush', '#flushfine', '#ohcollect', '#ohcollect-fine', '#clearblock'].includes(location.hash); // 자동조회 화면은 접속자에서 뺌
   const ALIVE_MS = 120000;   // 2분 안에 신호가 온 사람만 '보는 중'
   const BEAT_MS = 45000;     // 45초마다 신호
   const getName = () => { try { return (localStorage.getItem('viewerName') || '').trim(); } catch (e) { return ''; } };
