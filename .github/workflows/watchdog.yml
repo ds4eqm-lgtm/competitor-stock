@@ -1,0 +1,30 @@
+name: 수집 감시 알림
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+    inputs:
+      test:
+        description: "1 입력하면 테스트 알림만 보냄"
+        required: false
+        default: "0"
+
+permissions:
+  contents: read
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            data
+            ohouse/data
+            scripts
+      - name: 감시 실행
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          TEST_ALERT: ${{ github.event.inputs.test }}
+        run: python3 -I scripts/watchdog.py
