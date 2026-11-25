@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         스마트스토어 판매량 추적기
 // @namespace    competitor-stock-tracker
-// @version      5.3
+// @version      5.4
 // @description  상품페이지가 스스로 불러오는 옵션별 재고 데이터를 읽어서 옵션 단위로 판매추정을 깃허브에 자동 기록
 // @match        https://smartstore.naver.com/*/products/*
 // @match        https://brand.naver.com/*/products/*
@@ -860,12 +860,23 @@
         let skip = {};
         try { skip = GM_getValue('login_skip', {}) || {}; } catch (e) { /* 무시 */ }
         const skipList = Object.values(skip).filter((x) => x && x.until > Date.now());
-        reply({ type: 'pong', token: GITHUB_TOKEN, loginBlockAt: lb, loginBlockUntil: lu, loginSkip: skipList, trackerVersion: '5.3' });
+        reply({ type: 'pong', token: GITHUB_TOKEN, loginBlockAt: lb, loginBlockUntil: lu, loginSkip: skipList, trackerVersion: '5.4' });
         return;
       }
       if (m.type === 'testNotify') {
         const ok = await notifyPhone('알림 테스트', '판매량 추적 수집 PC에서 보낸 테스트 알림이에요. 이게 보이면 로그인 풀림 알림도 이렇게 와요.');
         reply({ type: 'notifyResult', ok, hasTopic: !!NTFY_TOPIC });
+        return;
+      }
+      if (m.type === 'setSecrets') {
+        // Ver5.4: 탬퍼몽키 편집 화면을 열지 않고 대시보드에서 연결 코드(토큰)·알림 이름을 넣음
+        try {
+          const t = String(m.token || '').trim();
+          const n = String(m.topic || '').trim();
+          if (t) GM_setValue('saved_github_token', t);
+          if (n) GM_setValue('saved_ntfy_topic', n);
+          reply({ type: 'secretsSaved', ok: !!t || !!n });
+        } catch (e) { reply({ type: 'secretsSaved', ok: false }); }
         return;
       }
       if (m.type === 'clearLoginBlock') {

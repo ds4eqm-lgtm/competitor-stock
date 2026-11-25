@@ -461,6 +461,27 @@ function showLoginBlock(m) {
   if (b) b.onclick = () => sendToTracker({ type: 'clearLoginBlock' });
 }
 
+// 추적기 5.4: 새 판을 깐 뒤 토큰이 비어 있으면 대시보드에서 바로 넣게 함 (탬퍼몽키 편집 화면 안 열어도 됨)
+function showTokenSetup(m) {
+  let el = document.getElementById('tokenSetup');
+  if (!m.trackerVersion || m.token) { if (el) el.remove(); return; }
+  if (el) return;
+  el = document.createElement('div');
+  el.id = 'tokenSetup';
+  el.style.cssText = 'padding:12px 16px;font-size:15px;color:#fff;background:#1d4ed8;line-height:1.8';
+  el.innerHTML = `<b>추적기 Ver${m.trackerVersion} 설치 마무리</b> · 아까 복사한 연결 코드를 붙여넣고 저장을 눌러 주세요 (한 번만 하면 됩니다)<br>
+    연결 코드 <input id="tsTok" type="password" style="width:320px;padding:4px" placeholder="Ctrl+V">
+    &nbsp;알림 이름(모르면 비워 두기) <input id="tsTopic" style="width:160px;padding:4px">
+    <button id="tsSave" style="margin-left:8px;padding:4px 12px;font-weight:700;border:0;border-radius:6px;cursor:pointer">저장</button>`;
+  document.body.insertBefore(el, document.body.firstChild);
+  document.getElementById('tsSave').onclick = () => {
+    const token = document.getElementById('tsTok').value.trim();
+    const topic = document.getElementById('tsTopic').value.trim();
+    if (!token) { alert('연결 코드를 붙여넣어 주세요.'); return; }
+    sendToTracker({ type: 'setSecrets', token, topic });
+  };
+}
+
 // 추적기 5.3: 상품 하나만 로그인을 요구해서 그 상품만 건너뛰는 중이면 (수집 PC 대시보드에서만 보임) 주황 안내
 function showLoginSkip(list) {
   let el = document.getElementById('loginSkipWarn');
@@ -512,7 +533,11 @@ function setModeLabel() {
 window.addEventListener('message', (ev) => {
   const m = ev.data;
   if (!m || m.from !== 'cs-tracker') return;
-  if (m.type === 'pong') { showLoginBlock(m); showLoginSkip(m.loginSkip || []); }
+  if (m.type === 'pong') { showLoginBlock(m); showLoginSkip(m.loginSkip || []); showTokenSetup(m); }
+  if (m.type === 'secretsSaved') {
+    if (m.ok) { alert('연결 코드를 저장했어요. 화면을 새로 고칩니다.'); location.reload(); }
+    else alert('저장하지 못했어요. 연결 코드를 다시 붙여넣어 주세요.');
+  }
   if (m.type === 'loginBlockCleared') showLoginBlock({});
   if (m.type === 'notifyResult') alert(m.ok ? '휴대폰으로 테스트 알림을 보냈어요. ntfy 앱에 왔는지 확인해 주세요.' : (m.hasTopic ? '알림 보내기 실패. 인터넷 연결이나 알림 주소 이름을 확인해 주세요.' : '탬퍼몽키 스크립트에 알림 주소 이름(NTFY_TOPIC)이 비어 있어요.'));
   if (m.type === 'pong' && !bridgeOk) {
