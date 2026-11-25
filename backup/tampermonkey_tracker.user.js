@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         스마트스토어 판매량 추적기
 // @namespace    competitor-stock-tracker
-// @version      5.4
+// @version      5.5
 // @description  상품페이지가 스스로 불러오는 옵션별 재고 데이터를 읽어서 옵션 단위로 판매추정을 깃허브에 자동 기록
 // @match        https://smartstore.naver.com/*/products/*
 // @match        https://brand.naver.com/*/products/*
@@ -146,19 +146,23 @@
   // #autotrack-fine 은 10분 조회(도든 등 일부 스토어만) → 결과는 data/history_fine.json 에 따로 올림
   let autoMode = false;
   let fineMode = false;
+  // Ver5.5: #autotrack-keep = 대표님 PC '빠진 상품 채우기' 창. 결과는 대기열에 넣고 창은 닫지 않음 (대시보드가 다음 상품으로 넘김)
+  let keepMode = false;
   try {
     if (window.location.hash === '#autotrack') sessionStorage.setItem('autotrack', '1');
     if (window.location.hash === '#autotrack-fine') sessionStorage.setItem('autotrack', 'fine');
+    if (window.location.hash === '#autotrack-keep') sessionStorage.setItem('autotrack', 'keep');
     const st = sessionStorage.getItem('autotrack');
-    autoMode = st === '1' || st === 'fine';
+    autoMode = st === '1' || st === 'fine' || st === 'keep';
     fineMode = st === 'fine';
+    keepMode = st === 'keep';
   } catch (e) {
     autoMode = window.location.hash === '#autotrack' || window.location.hash === '#autotrack-fine';
     fineMode = window.location.hash === '#autotrack-fine';
   }
 
   function closeAutoTab() {
-    if (!autoMode) return;
+    if (!autoMode || keepMode) return;
     try { sessionStorage.removeItem('autotrack'); } catch (e) { /* 무시 */ }
     setTimeout(() => window.close(), 1500);
   }
@@ -208,7 +212,7 @@
     } catch (e) { /* 무시 */ }
   }
   // 로그인 요구로 쉬는 중이면 스마트스토어, 브랜드스토어, 10분 조회 탭 전부 열자마자 닫음
-  if (autoMode && productNo) {
+  if (autoMode && !keepMode && productNo) {
     let lu = 0;
     try { lu = GM_getValue('login_block_until', 0) || 0; } catch (e) { /* 무시 */ }
     if (lu > Date.now()) {
@@ -219,7 +223,7 @@
       return;
     }
   }
-  if (autoMode && productNo) {
+  if (autoMode && !keepMode && productNo) {
     let sk = null;
     try { sk = (GM_getValue('login_skip', {}) || {})[productNo]; } catch (e) { /* 무시 */ }
     if (sk && sk.until > Date.now()) {
@@ -230,7 +234,7 @@
       return;
     }
   }
-  if (autoMode && !fineMode && isSmartstore && productNo) {
+  if (autoMode && !fineMode && !keepMode && isSmartstore && productNo) {
     let until = 0;
     try { until = GM_getValue('ss_block_until', 0) || 0; } catch (e) { /* 무시 */ }
     if (until > Date.now()) {
@@ -860,7 +864,7 @@
         let skip = {};
         try { skip = GM_getValue('login_skip', {}) || {}; } catch (e) { /* 무시 */ }
         const skipList = Object.values(skip).filter((x) => x && x.until > Date.now());
-        reply({ type: 'pong', token: GITHUB_TOKEN, loginBlockAt: lb, loginBlockUntil: lu, loginSkip: skipList, trackerVersion: '5.4' });
+        reply({ type: 'pong', token: GITHUB_TOKEN, loginBlockAt: lb, loginBlockUntil: lu, loginSkip: skipList, trackerVersion: '5.5' });
         return;
       }
       if (m.type === 'testNotify') {
@@ -868,6 +872,21 @@
         reply({ type: 'notifyResult', ok, hasTopic: !!NTFY_TOPIC });
         return;
       }
+      if (m.type === 'flushNow') {
+        // Ver5.5: '빠진 상품 채우기'가 모은 대기열을 지금 깃허브에 올림 (창 안 닫음)
+        const keys = pendingKeys();
+        const entries = keys.map((k) => GM_getValue(k)).filter(Boolean);
+        if (!entries.length) { reply({ type: 'flushDone', ok: true, n: 0 }); return; }
+        try {
+          await uploadEntries(entries);
+          keys.forEach((k) => GM_deleteValue(k));
+          reply({ type: 'flushDone', ok: true, n: entries.length });
+        } catch (e) {
+          reply({ type: 'flushDone', ok: false, n: entries.length, error: String((e && e.message) || e) });
+        }
+        return;
+      }
+      if (m.type === 'pendingCount') { reply({ type: 'pendingCount', n: pendingKeys().length }); return; }
       if (m.type === 'setSecrets') {
         // Ver5.4: 탬퍼몽키 편집 화면을 열지 않고 대시보드에서 연결 코드(토큰)·알림 이름을 넣음
         try {

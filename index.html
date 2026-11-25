@@ -492,6 +492,76 @@ function showLoginBlock(m) {
   if (b) b.onclick = () => sendToTracker({ type: 'clearLoginBlock' });
 }
 
+// ---------------- 추적기 5.5: 빠진 상품 채우기 (네이버 로그인된 이 PC가 수집 PC가 놓친 상품만 대신 읽어 올림) ----------------
+// 켜 두면 매시 22분~55분 사이에 이번 시각(예: 07:00) 기록이 없는 상품만 작은 창에서 하나씩 열고, 끝나면 한꺼번에 올림.
+// 수집 PC가 쉬는 1·3·5시는 건너뜀. 이 대시보드 탭과 작은 창을 닫지 않고 두면 됨.
+let fillWin = null, fillOn = false, fillBusy = false, fillDoneHour = '';
+function fillSay(t, pct) {
+  const el = document.getElementById('fillStat');
+  if (el) el.textContent = t;
+  const bar = document.getElementById('fillBar');
+  if (bar && pct != null) bar.style.width = Math.max(0, Math.min(100, pct)) + '%';
+}
+function showFillBar(m) {
+  if (document.getElementById('fillBox')) return;
+  const v = parseFloat(m.trackerVersion || '0');
+  if (!(v >= 5.5) || !m.token) return;
+  const el = document.createElement('div');
+  el.id = 'fillBox';
+  el.style.cssText = 'padding:10px 16px;font-size:14px;background:#ecfdf5;color:#065f46;border-bottom:1px solid #a7f3d0;line-height:1.7';
+  el.innerHTML = `<b>빠진 상품 채우기</b> · 수집 PC가 놓친 상품을 이 PC가 매시 대신 읽어 올립니다
+    <button id="fillBtn" style="margin-left:8px;padding:4px 12px;font-weight:700;border:0;border-radius:6px;background:#059669;color:#fff;cursor:pointer">켜기</button>
+    <span id="fillStat" style="margin-left:8px">꺼져 있음</span>
+    <div style="height:8px;background:#d1fae5;border-radius:4px;margin-top:4px;overflow:hidden"><div id="fillBar" style="height:100%;width:0;background:#059669"></div></div>`;
+  document.body.insertBefore(el, document.body.firstChild);
+  document.getElementById('fillBtn').onclick = () => {
+    if (fillOn) { fillOn = false; try { fillWin && fillWin.close(); } catch (e) { /* 무시 */ } fillWin = null; document.getElementById('fillBtn').textContent = '켜기'; fillSay('꺼져 있음', 0); return; }
+    fillWin = window.open('about:blank', 'csFill', 'width=480,height=640');
+    if (!fillWin) { alert('작은 창이 막혔어요. 주소창 오른쪽 팝업 차단 아이콘을 눌러 이 사이트 팝업을 허용한 뒤 다시 눌러 주세요.'); return; }
+    fillOn = true;
+    document.getElementById('fillBtn').textContent = '끄기';
+    fillDoneHour = '';
+    fillTick(true);
+  };
+  setInterval(() => fillTick(false), 60000);
+}
+function fillHourKey(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}T${String(d.getHours()).padStart(2, '0')}:00`; }
+async function fillTick(now) {
+  if (!fillOn || fillBusy) return;
+  if (!fillWin || fillWin.closed) { fillOn = false; const b = document.getElementById('fillBtn'); if (b) b.textContent = '켜기'; fillSay('작은 창이 닫혀서 멈췄어요. 다시 켜 주세요', 0); return; }
+  const d = new Date();
+  const hk = fillHourKey(d);
+  if ([1, 3, 5].includes(d.getHours())) { fillSay(`${String(d.getHours()).padStart(2, '0')}시는 수집 PC가 쉬는 시각이라 건너뜀`, 0); return; }
+  if (d.getMinutes() < 22 && !now) { fillSay(`대기 중 · 다음 확인 ${String(d.getHours()).padStart(2, '0')}:22`, 0); return; }
+  if (fillDoneHour === hk) return;
+  fillBusy = true;
+  try {
+    fillSay('이번 시각 기록 불러오는 중...', 2);
+    await loadData(true);
+    const have = new Set();
+    Object.keys(historyData).forEach((k) => { if (historyData[k] && historyData[k][hk] != null) have.add(k.split('_')[1]); });
+    const missing = Object.keys(productUrl).filter((pid) => !have.has(pid));
+    if (!missing.length) { fillDoneHour = hk; fillSay(`${hk.slice(11)} 기록 빠진 상품 없음 · 다음 시각까지 대기`, 100); return; }
+    for (let i = 0; i < missing.length; i++) {
+      if (!fillOn || !fillWin || fillWin.closed) throw new Error('작은 창이 닫힘');
+      fillSay(`빠진 상품 읽는 중 ${i + 1}/${missing.length}`, 5 + (i / missing.length) * 80);
+      fillWin.location.href = productUrl[missing[i]] + '#autotrack-keep';
+      await new Promise((r) => setTimeout(r, 9000));
+    }
+    try { fillWin.location.href = 'about:blank'; } catch (e) { /* 무시 */ }
+    fillSay(`읽은 ${missing.length}개 상품 깃허브에 올리는 중...`, 90);
+    const r = await askTracker({ type: 'flushNow' }, 'flushDone');
+    if (!r.ok) throw new Error(r.error || '올리기 실패');
+    fillDoneHour = hk;
+    fillSay(`${hk.slice(11)} 빠진 상품 ${missing.length}개 중 ${r.n}개 채움 · 다음 시각 22분에 다시 확인`, 100);
+    loadData(true).then(() => renderAll()).catch(() => {});
+  } catch (e) {
+    fillSay('채우기 실패: ' + ((e && e.message) || e) + ' · 1분 뒤 다시 시도', 0);
+  } finally {
+    fillBusy = false;
+  }
+}
+
 // 추적기 5.4: 새 판을 깐 뒤 토큰이 비어 있으면 대시보드에서 바로 넣게 함 (탬퍼몽키 편집 화면 안 열어도 됨)
 function showTokenSetup(m) {
   let el = document.getElementById('tokenSetup');
@@ -568,7 +638,7 @@ function setModeLabel() {
 window.addEventListener('message', (ev) => {
   const m = ev.data;
   if (!m || m.from !== 'cs-tracker') return;
-  if (m.type === 'pong') { showLoginBlock(m); showLoginSkip(m.loginSkip || []); showTokenSetup(m); }
+  if (m.type === 'pong') { showLoginBlock(m); showLoginSkip(m.loginSkip || []); showTokenSetup(m); showFillBar(m); }
   if (m.type === 'secretsSaved') {
     if (m.ok) { setTimeout(() => location.reload(), 300); }
     else alert('저장하지 못했어요. 연결 코드를 다시 붙여넣어 주세요.');
