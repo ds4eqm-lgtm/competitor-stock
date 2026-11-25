@@ -466,6 +466,10 @@ function showTokenSetup(m) {
   let el = document.getElementById('tokenSetup');
   if (!m.trackerVersion || m.token) { if (el) el.remove(); return; }
   if (el) return;
+  // 이 크롬에 '편집 켜기'로 넣어 둔 연결 코드가 있으면 묻지 않고 그대로 넘겨줌
+  let saved = '';
+  try { saved = localStorage.getItem('ghToken') || ''; } catch (e) { /* 무시 */ }
+  if (saved && !showTokenSetup.tried) { showTokenSetup.tried = true; sendToTracker({ type: 'setSecrets', token: saved }); return; }
   el = document.createElement('div');
   el.id = 'tokenSetup';
   el.style.cssText = 'padding:12px 16px;font-size:15px;color:#fff;background:#1d4ed8;line-height:1.8';
@@ -535,7 +539,7 @@ window.addEventListener('message', (ev) => {
   if (!m || m.from !== 'cs-tracker') return;
   if (m.type === 'pong') { showLoginBlock(m); showLoginSkip(m.loginSkip || []); showTokenSetup(m); }
   if (m.type === 'secretsSaved') {
-    if (m.ok) { alert('연결 코드를 저장했어요. 화면을 새로 고칩니다.'); location.reload(); }
+    if (m.ok) { setTimeout(() => location.reload(), 300); }
     else alert('저장하지 못했어요. 연결 코드를 다시 붙여넣어 주세요.');
   }
   if (m.type === 'loginBlockCleared') showLoginBlock({});
