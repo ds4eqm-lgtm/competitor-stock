@@ -2,7 +2,7 @@ name: 수집 감시 알림
 
 on:
   schedule:
-    - cron: "*/30 * * * *"
+    - cron: "7,37 * * * *"  # 정각은 깃허브가 붐벼 자주 건너뜀, 7분·37분에 점검
   workflow_dispatch:
     inputs:
       test:

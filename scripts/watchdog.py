@@ -104,7 +104,7 @@ def main():
                 best = max(recent) if recent else 0
                 print(name, "최근 상품 수", now_n, "지난 하루 최대", best)
                 lag_p = (now - newest).total_seconds() / 60
-                if best and now_n < best * PARTIAL_RATIO and lag_p < 35:
+                if best and now_n < best * PARTIAL_RATIO and lag_p < 65:
                     problems.append((f"{name} 일부만 수집",
                                      f"{name} {full.replace('T', ' ')} 조회에서 상품 {now_n}개만 모였어요 (평소 {best}개). 특정 상품이 로그인을 요구하거나 크롬 탭이 막혔는지 확인해 주세요."))
             except Exception as e:
