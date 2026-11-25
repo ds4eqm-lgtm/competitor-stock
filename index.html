@@ -2305,7 +2305,7 @@ async function loadActiveProducts() {
       const m = l.match(/products\/(\d+)/);
       if (!m) return;
       nums.push(m[1]);
-      const u = l.replace(/^#\s*/, '').split(/\s+/)[0]; // 맨 앞 # = 자동조회에서 잠시 뺀 상품 (기록·주소는 그대로 보여줌)
+      const u = l.split(/\s+/)[0];
       if (/^https?:\/\//i.test(u) && !(m[1] in urls)) urls[m[1]] = u;
       // 링크 뒤 단위 표시: '9장' → 박스 환산, '20cm' / '1m' → m 환산
       const tail = l.slice(l.indexOf(m[0]) + m[0].length);
